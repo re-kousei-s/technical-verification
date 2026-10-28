@@ -1,0 +1,842 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>人検出 送信端末</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1b1f24; --sub:#66707c; --line:#e3e6ea; --accent:#2f7de1; --ok:#1f9d55; --bad:#d93f3f; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14171b; --card:#1d2127; --text:#e8ebef; --sub:#96a0ab; --line:#2d333b; --accent:#5b9df0; --ok:#3fbf7a; --bad:#f06a6a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui,-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 12px 16px calc(24px + env(safe-area-inset-bottom)); }
+  h1 { font-size: 17px; margin: 4px 0 12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px; }
+  label { display:block; font-size:12px; color:var(--sub); margin:10px 0 4px; }
+  input, select { width:100%; font:inherit; padding:10px 12px; border-radius:8px; border:1px solid var(--line); background:var(--bg); color:var(--text); }
+  button { font:inherit; font-weight:600; padding:12px 16px; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--text); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.danger { color:var(--bad); }
+  button:disabled { opacity:.5; }
+  .row { display:flex; gap:8px; } .row > * { flex:1; }
+  .msg { color:var(--bad); font-size:13px; margin-top:8px; min-height:1em; }
+  .hint { color:var(--sub); font-size:12px; }
+  .dev { display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-top:1px solid var(--line); }
+  .dev:first-child { border-top:0; }
+  .stage { position:relative; width:100%; background:#000; border-radius:10px; overflow:hidden; display:flex; justify-content:center; align-items:center; }
+  .frame { position:relative; width:100%; touch-action:none; }
+  .frame video { width:100%; display:block; }
+  .frame canvas { position:absolute; inset:0; width:100%; height:100%; }
+  .fsbtn { position:absolute; right:8px; bottom:8px; z-index:3; padding:6px 10px; font-size:13px; border-radius:8px;
+           background:rgba(0,0,0,.55); color:#fff; border:1px solid rgba(255,255,255,.35); }
+  .fsui { display:none; position:absolute; left:0; right:0; top:0; z-index:3; padding:8px; justify-content:flex-end; gap:8px; pointer-events:none; }
+  .fsui button { pointer-events:auto; padding:8px 14px; font-size:14px; border-radius:10px; background:rgba(0,0,0,.6); color:#fff; border:1px solid rgba(255,255,255,.4); }
+  .stage.full { position:fixed; inset:0; z-index:1; height:100dvh; border-radius:0; }
+  .stage.full .frame { width:min(100vw, calc(100dvh * var(--ar, 1.7778))); }
+  .stage.full .fsbtn { display:none; }
+  .stage.full .fsui { display:flex; }
+  body.nofullscroll { overflow:hidden; }
+  .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:8px 10px; margin-top:10px; }
+  .stats div { font-size:12px; color:var(--sub); } .stats b { display:block; font-size:16px; color:var(--text); }
+  .pill { display:inline-block; padding:1px 10px; border-radius:999px; font-size:12px; border:1px solid var(--line); }
+  .pill.ok { color:var(--ok); border-color:var(--ok); } .pill.bad { color:var(--bad); border-color:var(--bad); }
+  .floorbox { display:flex; align-items:baseline; gap:12px; }
+  .floorbox .n { font-size:34px; font-weight:700; line-height:1.1; }
+  .resultbar { display:flex; justify-content:space-between; gap:8px; margin-top:8px; font-size:13px; color:var(--sub); min-height:1.4em; }
+  .flash { font-weight:700; } .flash.in { color:var(--ok); } .flash.out { color:#ff9500; }
+  .grow-row { display:grid; grid-template-columns:1fr 36px; gap:6px; align-items:center; margin-top:8px; }
+  .grow-row small { grid-column:1 / 3; color:var(--sub); font-size:12px; margin-top:-2px; }
+  .iconbtn { padding:6px 0; font-size:16px; }
+  .cand { display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-top:1px solid var(--line); font-size:13px; }
+  /* プレビューを切る：画面には出さないが、映像の取り込みは続ける（display:none だと、ブラウザが映像の更新を止めることがある） */
+  .stage.off { position:absolute; width:2px; height:2px; opacity:0; pointer-events:none; overflow:hidden; border-radius:0; }
+  /* ---- 設置画面：映像を画面いっぱいに出し、操作は上下の帯だけにする ---- */
+  body.inmain { overflow:hidden; background:#000; }
+  body.inmain main > h1, body.inmain #insecure, body.inmain #setup { display:none; }
+  #main { position:fixed; inset:0; z-index:40; background:#000; color:#fff; }
+  #main .stage.full { z-index:1; }
+  #main .topbar { position:absolute; top:0; left:0; right:0; z-index:5; display:flex; align-items:center; gap:10px;
+                  padding:calc(8px + env(safe-area-inset-top)) 12px 8px; background:linear-gradient(rgba(0,0,0,.6), rgba(0,0,0,0)); }
+  /* 下の帯は、ボタンの部分だけが押せる（帯の下にある線の○も、つかめるように） */
+  #main .bottom { position:absolute; left:0; right:0; bottom:0; z-index:5; padding:8px 12px calc(10px + env(safe-area-inset-bottom));
+                  pointer-events:none; }
+  #main .bottom button { pointer-events:auto; }
+  #main .info { position:absolute; left:0; right:0; top:calc(52px + env(safe-area-inset-top)); z-index:4; padding:0 12px; pointer-events:none; }
+  #main .guide { text-align:center; font-size:13px; color:#fff; text-shadow:0 1px 3px #000; margin-bottom:2px; }
+  #main .resultbar { color:#ddd; justify-content:center; gap:12px; text-shadow:0 1px 3px #000; }
+  #main .msg { text-align:center; text-shadow:0 1px 3px #000; }
+  #main .actions { display:flex; gap:10px; margin-top:6px; }
+  #main .actions button:disabled { display:none; }            /* 送信中は「設置開始」、停止中は「停止」を隠す */
+  .gbtn { background:rgba(30,30,30,.75); color:#fff; border:1px solid rgba(255,255,255,.45); backdrop-filter:blur(6px); }
+  .actions .gbtn { flex:1; padding:11px 10px; font-size:16px; border-radius:12px; }
+  .runstate { flex:2; text-align:center; padding:11px 10px; font-size:16px; border-radius:12px; background:rgba(30,30,30,.75); color:#fff; border:1px solid rgba(255,255,255,.45); }
+  .runstate.on { background:#2f9e44; border-color:#2f9e44; }
+  #main .topbar .gbtn { padding:7px 12px; font-size:14px; border-radius:10px; }
+  .offnote { position:absolute; inset:0; z-index:2; display:flex; align-items:center; justify-content:center; color:#aaa; font-size:15px; pointer-events:none; }
+  /* 設定パネル：画面の下から出る */
+  .sheet { position:absolute; left:0; right:0; bottom:0; top:12%; z-index:10; background:var(--bg); color:var(--text);
+           border-radius:16px 16px 0 0; display:flex; flex-direction:column; box-shadow:0 -6px 30px rgba(0,0,0,.5); }
+  .sheet-head { display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border-bottom:1px solid var(--line); }
+  .sheet-body { overflow-y:auto; padding:12px 16px calc(24px + env(safe-area-inset-bottom)); -webkit-overflow-scrolling:touch; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>人検出 送信端末</h1>
+  <div id="insecure" class="card hidden"><b>カメラを使えません。</b>
+    <div class="hint">この画面は HTTPS で開く必要があります（<span id="httpsUrl"></span>）。証明書の警告は「詳細 → 進む」で進んでください。</div></div>
+
+  <!-- 1. 登録 -->
+  <section id="setup">
+    <div class="card">
+      <b>この端末を登録する</b>
+      <label for="floor">フロア（階）</label>
+      <input id="floor" type="number" inputmode="numeric" placeholder="例: 2" list="floorList">
+      <datalist id="floorList"></datalist>
+      <label for="name">端末の名前（任意）</label>
+      <input id="name" type="text" maxlength="30" placeholder="例: 階段A 上り口">
+      <div class="row" style="margin-top:14px"><button class="primary" id="registerBtn">登録して始める</button></div>
+      <div class="msg" id="setupMsg"></div>
+    </div>
+    <div class="card hidden" id="existingCard">
+      <b>登録済みの端末を使う</b>
+      <div class="hint">ブラウザのデータを消したときなど、前の登録を引き継ぎます。</div>
+      <div id="existing"></div>
+    </div>
+  </section>
+
+  <!-- 2. 送信 -->
+  <section id="main" class="hidden">
+    <!-- 映像：画面いっぱい。線・数字・認識結果は、この上に重ねて描く -->
+    <div class="stage full" id="stage">
+      <div class="frame" id="frame">
+        <video id="video" playsinline muted autoplay></video>
+        <canvas id="overlay"></canvas>
+      </div>
+    </div>
+    <div class="offnote hidden" id="offNote">プレビューを切っています（送信は続いています）</div>
+
+    <!-- 上の帯：接続の状態と、設定 -->
+    <div class="topbar">
+      <span class="pill bad" id="connPill">停止中</span>
+      <b id="camTitle"></b>
+      <span style="flex:1"></span>
+      <button class="gbtn" id="fsBtn">⛶</button>
+      <button class="gbtn" id="menuBtn">⚙ 設定</button>
+    </div>
+
+    <!-- 下の帯：線を置いて、設置開始 -->
+    <!-- 案内・認識結果・エラー：映像の上に重ねるが、線の操作は邪魔しない（上寄せ） -->
+    <div class="info">
+      <div class="guide" id="guide">待機中です。認識の開始・停止、線の設定、ライブ表示は、管理画面から行います</div>
+      <div class="resultbar"><span id="resultInfo">認識結果を待っています</span><span id="flash" class="flash"></span></div>
+      <div class="msg" id="mainMsg"></div>
+    </div>
+    <div class="bottom">
+      <div class="actions">
+        <button class="gbtn" id="pickVideoBtn">🎞 動画</button>
+        <div class="runstate" id="runState">待機中</div>
+      </div>
+    </div>
+
+    <!-- 設定パネル：ふだんは隠す -->
+    <div class="sheet hidden" id="sheet">
+      <div class="sheet-head"><b>設定</b><button id="sheetClose">閉じる</button></div>
+      <div class="sheet-body">
+        <div class="card" id="testCard">
+          <b>テスト動画で送る</b>
+          <div class="hint" style="margin-top:6px">カメラの代わりに、動画ファイルをくり返し再生して送ります（スマホを置いたままの動作確認用）。送信を止めてから切り替えてください。</div>
+          <div class="row" style="margin-top:10px">
+            <input type="file" id="testFile" accept="video/*" style="max-width:100%">
+            <button id="testOff" class="hidden">カメラに戻す</button>
+          </div>
+          <div class="hint" id="testMsg" style="margin-top:6px"></div>
+        </div>
+        <div class="card">
+          <b id="camSub"></b>
+          <div class="hint" style="margin-top:6px">このフロアの人数（概算・全端末の合算）</div>
+          <div class="floorbox"><span class="n" id="floorEst">–</span><span id="floorRange" class="hint"></span></div>
+          <div class="row" style="margin-top:10px"><button id="previewBtn">プレビュー: 表示中</button></div>
+          <div class="hint" style="margin-top:6px">スマホが熱いときは、プレビューを切ると、負荷と発熱が減ります（送信は続きます）。</div>
+        </div>
+
+    <details class="card" id="lineCard" open>
+      <summary><b>人数を数える線</b></summary>
+      <div class="hint" style="margin-top:6px">人がこの線を越えた向きで IN / OUT を数えます（<b>矢印の向きが IN</b>）。
+        入口が複数あるときは、<b>入口ごとに線を追加</b>（画面下の「＋ 線」）してください。プレビューの○をドラッグすると、線を動かせます。</div>
+      <div id="lineList"></div>
+      <label for="anchorSel" style="margin-top:12px">線を越えたと判断する、人の枠の位置</label>
+      <select id="anchorSel">
+        <option value="bottom_center">足元が越えたら（おすすめ）</option>
+        <option value="center">体の中心が越えたら</option>
+        <option value="top_center">頭が越えたら（足元が隠れるとき）</option>
+        <option value="box">人の枠全体が越えたら</option>
+      </select>
+      <div class="hint">線の向きは、縦でも横でも斜めでも構いません。人の枠（緑の四角）の「この位置」が線を越えたときに数えます。
+        <b>線は、その位置が通る場所に引いてください</b>（足元なら床の上、ドアなら入口のふち）。
+        「枠全体」は、枠が線をまたいだまま消える場所（ドアに入る人など）では数えられません。</div>
+      <div class="hint" id="lineMsg" style="margin-top:6px"></div>
+    </details>
+
+    <details class="card" id="camSettings">
+      <summary><b>カメラの設定（画角）</b></summary>
+      <label for="camSel">カメラ（広角レンズが選べることがあります）</label>
+      <select id="camSel"></select>
+      <label for="resSel">解像度・縦横比</label>
+      <select id="resSel">
+        <option value="1280x960">1280×960（4:3・既定。センサー全体を使うので広く映ることが多い）</option>
+        <option value="960x720">960×720（4:3・軽い）</option>
+        <option value="1280x720">1280×720（16:9）</option>
+        <option value="1920x1080">1920×1080（16:9・高画質、通信が増える）</option>
+        <option value="640x480">640×480（4:3・軽い）</option>
+      </select>
+      <div id="zoomRow" class="hidden">
+        <label for="zoom">ズーム <b id="zoomVal"></b></label>
+        <input id="zoom" type="range" step="0.1">
+      </div>
+      <div style="margin-top:10px"><button id="widestBtn" style="width:100%">最も広くする（4:3・ズーム最小）</button></div>
+      <div class="hint" id="camInfo" style="margin-top:8px"></div>
+      <div class="hint" style="margin-top:4px">それでも狭いときは、端末を人の通り道から離す（天井や壁の高い位置に付ける）か、広角レンズのクリップを付けてください。
+        カメラや解像度を変えると、送信中は一度つなぎ直します。</div>
+    </details>
+
+    <div class="card">
+      <div class="stats">
+        <div>送信フレーム<b id="sSent">0</b></div>
+        <div>送信速度<b id="sKbps">–</b></div>
+        <div>送信を間引いた<b id="sSkipped">0</b></div>
+        <div>サーバー受信<b id="sDecoded">–</b></div>
+        <div>サーバー破棄<b id="sDropped">–</b></div>
+        <div>IN / OUT<b id="sInOut">–</b></div>
+      </div>
+      <div style="margin-top:12px"><button id="resetBtn" class="danger" style="width:100%">この端末の IN / OUT の履歴をリセット</button></div>
+      <div style="margin-top:8px"><button id="resetAllBtn" class="danger" style="width:100%">全部リセット（全端末の履歴と、全フロアの人数）</button></div>
+      <label for="fps">サーバーで認識する頻度（枚/秒）</label>
+      <select id="fps"><option>1</option><option>2</option><option>3</option><option>5</option></select>
+      <div class="hint">端末は約 5fps で送ります。サーバーはこの頻度に間引いて認識します（数秒で反映）。</div>
+    </div>
+
+
+        <div class="card">
+          <pre class="hint" id="diag" style="white-space:pre-wrap;word-break:break-all;margin:0"></pre>
+          <button class="danger" id="unregisterBtn" style="margin-top:8px">この端末の登録を解除</button>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const SEND_FPS = 5;              // 端末から送る頻度
+const KEYFRAME_SECONDS = 10;     // 10秒ごと。接続直後と、フレームを捨てた直後は別に強制するので、定期的なものは長くてよい
+let curFps = SEND_FPS, encCfg = null, capCanvas = null, capCtx = null, capW = 0, capH = 0, baseBitrate = 0, liveOn = false, liveSession = false, ctlWs = null;
+const BITRATE_720P = 1_000_000;   // 1280x720 のとき。解像度に比例させる（0.6〜3 Mbps）
+const MAX_BUFFERED = 1_500_000;  // 送信待ちがこれを超えたらフレームを捨てる（通信が詰まったとき）
+const $ = (id) => document.getElementById(id);
+const api = async (path, opts = {}) => {
+  const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.status);
+  return res.json();
+};
+const store = {
+  get() { try { return JSON.parse(localStorage.getItem("camera") || "null"); } catch { return null; } },
+  set(c) { try { localStorage.setItem("camera", JSON.stringify(c)); } catch {} },
+  clear() { try { localStorage.removeItem("camera"); } catch {} },
+};
+
+let cam = null, stream = null, ws = null, encoder = null, timer = null, running = false, wakeLock = null;
+let frameNo = 0, needKey = true, sent = 0, skipped = 0, bytes = 0, bytesAt = performance.now(), lineDirty = false;
+let lines = [], drag = null, selLine = null, polling = false;   // selLine: 選んでいる線の番号   // lines: 数える線のリスト、drag: いま動かしている線の端 {li, pi}
+const DEFAULT_RES = "1280x960";   // 既定は 4:3。16:9 より、センサー全体を使うので広く映ることが多い
+const prefs = {
+  get() { try { return JSON.parse(localStorage.getItem("camprefs") || "{}"); } catch { return {}; } },
+  set(p) { try { localStorage.setItem("camprefs", JSON.stringify({ ...prefs.get(), ...p })); } catch {} },
+};
+let lineCounts = {};   // 線の名前 → { in, out }
+let previewOn = prefs.get().preview !== false;   // 画面のプレビュー表示（切ると、描画の分だけ端末の負荷・発熱が減る）
+let counts = { in: 0, out: 0 }, floorEst = null, flashDir = null, flashUntil = 0;
+let result = null, resultStamp = null, resultChangedAt = 0, seenEvents = new Set(), flashTimer = null, resultLoop = false;
+
+if (!window.isSecureContext || !navigator.mediaDevices) {
+  $("insecure").classList.remove("hidden");
+  $("httpsUrl").textContent = "https://" + location.hostname + ":8000";
+}
+if (!("VideoEncoder" in window)) $("mainMsg").textContent = "このブラウザは動画の符号化（WebCodecs）に対応していません。Android の Chrome を使ってください。";
+
+/* ---------- 登録 ---------- */
+async function loadFloors() {
+  const floors = await api("/api/floors");
+  $("floorList").replaceChildren(...floors.map(f => Object.assign(document.createElement("option"), { value: f.floor })));
+  const ex = $("existing");
+  ex.replaceChildren();
+  const devices = floors.flatMap(f => f.devices.filter(d => d.source === "db").map(d => ({ ...d, floor: f.floor })));
+  $("existingCard").classList.toggle("hidden", !devices.length);
+  for (const d of devices) {
+    const row = document.createElement("div"); row.className = "dev";
+    const label = document.createElement("div");
+    label.textContent = `${d.floor}階 ${d.name || d.id}`;
+    const sub = document.createElement("div"); sub.className = "hint"; sub.textContent = d.id + (d.connected ? "（送信中）" : "");
+    label.append(sub);
+    const btn = document.createElement("button"); btn.textContent = "使う"; btn.disabled = d.connected;
+    btn.onclick = () => enter(d);
+    row.append(label, btn); ex.append(row);
+  }
+}
+
+$("registerBtn").onclick = async () => {
+  $("setupMsg").textContent = "";
+  const floor = parseInt($("floor").value, 10);
+  if (Number.isNaN(floor)) { $("setupMsg").textContent = "フロアを入力してください"; return; }
+  try {
+    enter(await api("/api/register", { method: "POST", body: JSON.stringify({ floor, name: $("name").value }) }));
+  } catch (e) { $("setupMsg").textContent = "登録に失敗: " + e.message; }
+};
+
+function enter(c) {
+  cam = c; store.set({ id: c.id });
+  lines = c.lines || []; renderLineList(); $("anchorSel").value = c.anchor || "bottom_center";
+  $("fps").value = String(Math.round(c.sample_fps));
+  $("camTitle").textContent = `${c.floor}階 ${c.name || ""}`.trim();
+  $("camSub").textContent = c.id;
+  $("setup").classList.add("hidden"); $("main").classList.remove("hidden"); document.body.classList.add("inmain");
+  openCamera();
+  connectCtl(); applyPreview();
+  if (!polling) { polling = true; pollStats(); }
+  if (!resultLoop) { resultLoop = true; pollResult(); }
+}
+
+/* ---------- プレビューとライン ---------- */
+async function openCamera() {
+  if (testUrl) return openTestVideo();
+  if (stream) return;
+  const pf = prefs.get();
+  const [W, H] = (pf.res || DEFAULT_RES).split("x").map(Number);
+  const video = { width: { ideal: W }, height: { ideal: H } };
+  if (pf.deviceId) video.deviceId = { exact: pf.deviceId }; else video.facingMode = { ideal: "environment" };
+  try {
+    try { stream = await navigator.mediaDevices.getUserMedia({ video, audio: false }); }
+    catch (e) {   // 保存していたカメラが無くなったときなどは、既定のカメラで開き直す
+      if (!pf.deviceId) throw e;
+      prefs.set({ deviceId: null });
+      stream = await navigator.mediaDevices.getUserMedia({ video: { width: video.width, height: video.height, facingMode: { ideal: "environment" } }, audio: false });
+    }
+    $("video").srcObject = stream;
+    await $("video").play();
+    await setupCameraControls(pf);
+    drawOverlay();
+  } catch (e) { $("mainMsg").textContent = "カメラを開けません: " + e.message + "（「🎞 動画」で、動画ファイルを流すこともできます）"; }
+}
+
+/* ---------- テスト動画（カメラの代わりに、ファイルをくり返し再生する） ---------- */
+let testUrl = null;
+async function openTestVideo() {
+  const v = $("video");
+  v.srcObject = null; v.src = testUrl; v.loop = true; v.muted = true; v.playsInline = true;
+  try { await v.play(); drawOverlay(); $("testMsg").textContent = `再生中: ${v.videoWidth}×${v.videoHeight}`; }
+  catch (e) { $("mainMsg").textContent = "動画を再生できません: " + e.message; }
+}
+function setTestVideo(file) {
+  if (running) { $("testMsg").textContent = "送信中は切り替えられません。「停止」してから選んでください"; $("testFile").value = ""; return; }
+  closeStream();
+  if (testUrl) URL.revokeObjectURL(testUrl);
+  testUrl = file ? URL.createObjectURL(file) : null;
+  $("testOff").classList.toggle("hidden", !file);
+  $("pickVideoBtn").textContent = file ? "📷 カメラに戻す" : "🎞 動画";
+  if (file) { $("testMsg").textContent = "読み込み中…"; openTestVideo(); return; }
+  const v = $("video"); v.pause(); v.removeAttribute("src"); v.load(); v.loop = false;
+  $("testMsg").textContent = ""; $("testFile").value = "";
+  openCamera();
+}
+$("testFile").onchange = () => setTestVideo($("testFile").files[0] || null);
+$("testOff").onclick = () => setTestVideo(null);
+// メイン画面の「動画」ボタン：動画ファイルを選ぶ（すでに動画を使っているときは、カメラに戻す）
+$("pickVideoBtn").onclick = () => { if (testUrl) setTestVideo(null); else $("testFile").click(); };
+
+function closeStream() { stream?.getTracks().forEach(t => t.stop()); stream = null; }
+
+// カメラの一覧・解像度・ズームを画面に出す（カメラの名前は、許可をもらったあとでないと取れない）
+async function setupCameraControls(pf) {
+  const track = stream.getVideoTracks()[0], settings = track.getSettings(), caps = track.getCapabilities?.() || {};
+  try {
+    const cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput");
+    $("camSel").replaceChildren(...cams.map((d, i) => Object.assign(document.createElement("option"),
+      { value: d.deviceId, textContent: d.label || `カメラ ${i + 1}`, selected: d.deviceId === settings.deviceId })));
+  } catch {}
+  $("resSel").value = pf.res || DEFAULT_RES;
+  const zr = $("zoomRow");
+  if (caps.zoom && caps.zoom.max > caps.zoom.min) {
+    const z = $("zoom"); z.min = caps.zoom.min; z.max = caps.zoom.max; z.step = caps.zoom.step || 0.1;
+    const want = pf.zoom != null && pf.zoom >= caps.zoom.min && pf.zoom <= caps.zoom.max ? pf.zoom : caps.zoom.min;   // 保存が無ければ最も広く
+    z.value = want; $("zoomVal").textContent = "×" + (+want).toFixed(1);
+    try { await track.applyConstraints({ advanced: [{ zoom: +want }] }); } catch {}
+    zr.classList.remove("hidden");
+  } else { zr.classList.add("hidden"); }
+  $("camInfo").textContent = `いまの映像: ${settings.width}×${settings.height}` +
+    (caps.zoom ? ` ／ ズーム ${(settings.zoom ?? 1).toFixed?.(1) ?? settings.zoom}（${caps.zoom.min}〜${caps.zoom.max}）` : " ／ この端末・ブラウザはズームの変更に対応していません");
+}
+
+// カメラや解像度を変える：映像を取り直す。送信中だったら、つなぎ直して再開する
+async function reopenCamera() {
+  const was = running;
+  if (was) stop();
+  closeStream();
+  await openCamera();
+  if (was) await start();
+}
+$("widestBtn").onclick = () => { prefs.set({ res: DEFAULT_RES, zoom: null }); reopenCamera(); };
+$("camSel").onchange = () => { prefs.set({ deviceId: $("camSel").value, zoom: null }); reopenCamera(); };
+$("resSel").onchange = () => { prefs.set({ res: $("resSel").value }); reopenCamera(); };
+$("zoom").oninput = async () => {
+  const z = +$("zoom").value; $("zoomVal").textContent = "×" + z.toFixed(1); prefs.set({ zoom: z });
+  try { await stream?.getVideoTracks()[0].applyConstraints({ advanced: [{ zoom: z }] }); } catch {}
+};
+
+function drawOverlay() {
+  if (!previewOn) return;   // プレビューを切っているときは、描かない
+  const cv = $("overlay"), box = $("frame").getBoundingClientRect();
+  cv.width = box.width * devicePixelRatio; cv.height = box.height * devicePixelRatio;
+  const g = cv.getContext("2d"); g.scale(devicePixelRatio, devicePixelRatio);
+  if (result && result.boxes) {
+    g.lineWidth = 2; g.font = "bold 11px system-ui";
+    for (const [x1, y1, x2, y2, id] of result.boxes) {
+      const x = x1 * box.width, y = y1 * box.height, w = (x2 - x1) * box.width, h = (y2 - y1) * box.height;
+      g.strokeStyle = "#34c759"; g.strokeRect(x, y, w, h);
+      if (id >= 0) { g.fillStyle = "#34c759"; g.fillRect(x, y - 14, 26, 14); g.fillStyle = "#000"; g.fillText("#" + id, x + 3, y - 3); }
+    }
+  }
+  drawLines(g, box);
+  drawHud(g, box);
+}
+
+// 数える線を、全部描く。線ごとに色を変え、始点のそばに名前、中央に IN の向きの矢印を描く
+const LINE_COLORS = ["#ff3b30", "#ffcc00", "#00c7ff", "#ff7ad9", "#7dff7a", "#b388ff"];
+function drawLines(g, box) {
+  lines.forEach((ln, i) => {
+    const col = LINE_COLORS[i % LINE_COLORS.length];
+    const P = ln.line.map(([x, y]) => [x * box.width, y * box.height]);
+    g.lineWidth = i === selLine ? 5 : 3; g.strokeStyle = col; g.beginPath(); g.moveTo(...P[0]); g.lineTo(...P[1]); g.stroke();   // 選んだ線は太く
+    // IN の向き = 始点→終点に対して画面の左側（サーバーの LineZone と同じ）
+    const dx = P[1][0] - P[0][0], dy = P[1][1] - P[0][1], len = Math.hypot(dx, dy) || 1;
+    const nx = dy / len, ny = -dx / len, mx = (P[0][0] + P[1][0]) / 2, my = (P[0][1] + P[1][1]) / 2, L = 38;
+    g.strokeStyle = g.fillStyle = "#34c759"; g.lineWidth = 4;
+    g.beginPath(); g.moveTo(mx - nx * L / 2, my - ny * L / 2); g.lineTo(mx + nx * L / 2, my + ny * L / 2); g.stroke();
+    g.beginPath(); g.moveTo(mx + nx * (L / 2 + 10), my + ny * (L / 2 + 10));
+    g.lineTo(mx + nx * L / 2 - ny * 8, my + ny * L / 2 + nx * 8); g.lineTo(mx + nx * L / 2 + ny * 8, my + ny * L / 2 - nx * 8); g.fill();
+    g.font = "bold 14px system-ui"; g.fillText("IN", mx + nx * (L / 2 + 16) - 8, my + ny * (L / 2 + 16) + 5);
+    g.fillStyle = "#ff9500"; g.fillText("OUT", mx - nx * (L / 2 + 18) - 12, my - ny * (L / 2 + 18) + 5);
+    g.font = "bold 13px system-ui"; g.fillStyle = col; g.fillText(ln.name, P[0][0] + 10, P[0][1] - 12);   // 線の名前
+    for (const [x, y] of P) { g.beginPath(); g.arc(x, y, i === selLine ? 15 : 12, 0, 7); g.fillStyle = col; g.fill(); g.strokeStyle = "#fff"; g.lineWidth = 2; g.stroke(); }
+  });
+}
+
+// プレビュー上の表示：累計の IN / OUT、フロア人数の概算、認識の状況
+function drawHud(g, box) {
+  const full = $("stage").classList.contains("full");
+  const fs = Math.max(15, Math.min(box.height * (full ? 0.06 : 0.07), 34));   // 文字の大きさ
+  const pad = fs * 0.45;
+  const rows = [
+    { parts: [["IN ", "#34c759"], [String(counts.in), "#fff"], ["   OUT ", "#ff9500"], [String(counts.out), "#fff"]], size: fs },
+  ];
+  if (floorEst) rows.push({ parts: [[`${cam.floor}階 約${floorEst.count}人` + (floorEst.high > floorEst.low ? `（${floorEst.low}〜${floorEst.high}）` : ""), "#fff"]], size: fs * 0.62 });
+  const info = result ? `検出${result.boxes.length}人 遅れ${(result.lag_ms / 1000).toFixed(1)}秒` : (running ? "認識待ち…" : "");
+  if (info) rows.push({ parts: [[info, "#ddd"]], size: fs * 0.55 });
+  g.textBaseline = "top";
+  const widths = rows.map(r => { g.font = `700 ${r.size}px system-ui`; return r.parts.reduce((w, [t]) => w + g.measureText(t).width, 0); });
+  const w = Math.max(...widths) + pad * 2, h = rows.reduce((a, r) => a + r.size * 1.25, 0) + pad;
+  g.fillStyle = "rgba(0,0,0,.6)"; g.beginPath(); if (g.roundRect) g.roundRect(8, 8, w, h, 8); else g.rect(8, 8, w, h); g.fill();
+  let y = 8 + pad / 2;
+  for (const r of rows) {
+    g.font = `700 ${r.size}px system-ui`; let x = 8 + pad;
+    for (const [t, c] of r.parts) { g.fillStyle = c; g.fillText(t, x, y); x += g.measureText(t).width; }
+    y += r.size * 1.25;
+  }
+  if (flashDir && performance.now() < flashUntil) {   // 通過の瞬間に、大きく表示
+    const t = flashDir === "in" ? "IN ＋1" : "OUT ＋1";
+    g.font = `800 ${fs * 1.6}px system-ui`; g.textAlign = "center"; g.textBaseline = "middle";
+    g.lineWidth = fs * 0.2; g.strokeStyle = "rgba(0,0,0,.7)"; g.strokeText(t, box.width / 2, box.height * 0.18);
+    g.fillStyle = flashDir === "in" ? "#34c759" : "#ff9500"; g.fillText(t, box.width / 2, box.height * 0.18);
+    g.textAlign = "start";
+  }
+}
+
+const stage = $("frame");
+const pos = (e) => { const r = stage.getBoundingClientRect(); return [Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))]; };
+// 線の端（○）をつかんで動かす。いちばん近い端が 40px 以内ならつかむ
+stage.addEventListener("pointerdown", (e) => {
+  return; // 線の編集は、管理画面だけ（スマホでは、細かい操作が難しい）
+  const [x, y] = pos(e), r = stage.getBoundingClientRect();
+  let best = [40, null];
+  lines.forEach((ln, li) => ln.line.forEach(([px, py], pi) => {
+    const d = Math.hypot((px - x) * r.width, (py - y) * r.height);
+    if (d < best[0]) best = [d, { li, pi }];
+  }));
+  if (best[1]) { drag = best[1]; selLine = best[1].li; updateDelBtn(); stage.setPointerCapture(e.pointerId); }
+});
+stage.addEventListener("pointermove", (e) => {
+  if (drag) { lines[drag.li].line[drag.pi] = pos(e); drawOverlay(); }
+});
+stage.addEventListener("pointerup", async () => {
+  if (!drag) return;
+  drag = null;
+  await saveLines();      // 離したときに保存する
+});
+window.addEventListener("resize", () => cam && drawOverlay());
+$("video").addEventListener("loadedmetadata", () => {
+  const v = $("video"); $("stage").style.setProperty("--ar", v.videoWidth / v.videoHeight);
+  drawOverlay();
+});
+$("fps").onchange = () => api(`/api/cameras/${cam.id}`, { method: "PATCH", body: JSON.stringify({ sample_fps: +$("fps").value }) })
+  .catch(e => $("mainMsg").textContent = "保存できません: " + e.message);
+
+/* ---------- 送信（H.264 を WebSocket で） ---------- */
+const CODECS = ["avc1.42001f", "avc1.42e01f", "avc1.4d401f", "avc1.42001e", "avc1.4d4028"];   // Baseline 3.1 → Constrained Baseline → Main → Baseline 3.0 → Main 4.0
+const bitrateFor = (w, h) => Math.round(Math.min(3_000_000, Math.max(600_000, BITRATE_720P * (w * h) / (1280 * 720))));
+const even = (n) => Math.max(2, Math.round(n) & ~1);
+
+// この端末・ブラウザが実際に受け付ける H.264 の符号化設定を、順に試して探す。
+// 受け付けない原因は端末ごとに違う（形式・ハードウェア/ソフトウェア・大きさ・レベルなど）ので、組み合わせで当たりを探し、
+// だめだった組み合わせは画面に出す。符号化する大きさは、映像より小さくしてもよい（canvas に縮めて描くので）。
+async function pickEncoderConfig(srcW, srcH) {
+  const sizes = [[srcW, srcH], [1280, Math.round(1280 * srcH / srcW)], [960, Math.round(960 * srcH / srcW)], [640, Math.round(640 * srcH / srcW)]]
+    .map(([w, h]) => [even(w), even(h)]).filter(([w], i, a) => w <= even(srcW) && a.findIndex(x => x[0] === w) === i);
+  const tried = [];
+  for (const pass of [{ latencyMode: "realtime" }, {}]) {            // 2周目は latencyMode を指定しない
+    for (const [w, h] of sizes) for (const hw of ["no-preference", "prefer-software"]) for (const format of ["annexb", "avc"]) for (const codec of CODECS) {
+      const cfg = { codec, width: w, height: h, bitrate: bitrateFor(w, h), framerate: SEND_FPS, hardwareAcceleration: hw, avc: { format }, ...pass };
+      let ok = false, why = "";
+      try { ok = (await VideoEncoder.isConfigSupported(cfg)).supported; } catch (e) { why = " " + (e.name || e.message); }
+      if (ok) return { cfg, w, h, tried };
+      if (tried.length < 400) tried.push(`${codec} ${w}x${h} ${format} ${hw === "no-preference" ? "" : "sw "}${pass.latencyMode ? "" : "(lat無) "}×${why}`);
+    }
+  }
+  return { cfg: null, tried };
+}
+
+// AVCC（NAL の前に長さが付く形）を Annex B（スタートコード付き）に直す。format: "avc" でしか出せない端末用
+const START = new Uint8Array([0, 0, 0, 1]);
+function parseAvcC(desc) {
+  const d = new Uint8Array(desc.buffer ? desc.buffer.slice(desc.byteOffset, desc.byteOffset + desc.byteLength) : desc);
+  const nals = []; let o = 5, n = d[o++] & 0x1f;
+  for (let i = 0; i < n; i++) { const len = (d[o] << 8) | d[o + 1]; o += 2; nals.push(d.slice(o, o + len)); o += len; }
+  n = d[o++];
+  for (let i = 0; i < n; i++) { const len = (d[o] << 8) | d[o + 1]; o += 2; nals.push(d.slice(o, o + len)); o += len; }
+  return { lengthSize: (d[4] & 3) + 1, nals };
+}
+function avccToAnnexB(data, ps, isKey) {
+  const parts = [];
+  if (isKey && ps) for (const nal of ps.nals) parts.push(START, nal);       // キーフレームに SPS/PPS を付ける
+  let o = 0;
+  while (o + ps.lengthSize <= data.length) {
+    let len = 0; for (let i = 0; i < ps.lengthSize; i++) len = len * 256 + data[o++];
+    parts.push(START, data.subarray(o, o + len)); o += len;
+  }
+  const out = new Uint8Array(parts.reduce((a, p) => a + p.length, 0)); let q = 0;
+  for (const p of parts) { out.set(p, q); q += p.length; }
+  return out;
+}
+
+function setConn(ok, text) { const p = $("connPill"); p.textContent = text; p.className = "pill " + (ok ? "ok" : "bad"); }
+
+/* ---------- 待機用の接続（送信していなくても、サーバーからの「配信を始めて／止めて」を受ける） ---------- */
+// この画面を開いている間ずっとつなぐ。管理画面で誰かがこの端末のライブ表示を開くと、送信していなくても、
+// その間だけプレビュー専用の映像（認識・カウントには使わない）を高い fps で送る。画面は点けたままにしておくこと。
+let ctlWanted = false;
+function connectCtl() {
+  if (!cam) return;
+  ctlWanted = true;
+  try { ctlWs?.close(); } catch {}
+  ctlWs = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ctl/${cam.id}`);
+  ctlWs.onmessage = (e) => {
+    try {
+      const m = JSON.parse(e.data);
+      if (m.cmd === "recognize_start") { $("mainMsg").textContent = ""; start(); }          // 管理画面が「認識を開始」した
+      else if (m.cmd === "recognize_stop") { if (running && !liveSession) stop(); }          // 管理画面が「認識を停止」した
+      else if (m.cmd === "live_start" && !running) { $("mainMsg").textContent = ""; start({ live: true, fps: m.fps || 30 }); }
+      else if (m.cmd === "live_stop" && liveSession) stop();
+    } catch {}
+  };
+  ctlWs.onclose = (e) => { if (ctlWanted && cam && e.code !== 4410 && e.code !== 4404) setTimeout(connectCtl, 2000); };
+}
+function closeCtl() { ctlWanted = false; try { ctlWs?.close(); } catch {} ctlWs = null; }
+
+function connectWs() {
+  const url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/${cam.id}` + (liveSession ? "?mode=live" : "");
+  ws = new WebSocket(url); ws.binaryType = "arraybuffer";
+  ws.onopen = () => { needKey = true; setConn(true, connText()); $("mainMsg").textContent = ""; };
+  // サーバーからの指示：ダッシュボードで誰かがこの端末のライブ表示を見ている間だけ、高い fps で送る（見終わったら元に戻る）
+  ws.onmessage = (e) => {
+    if (typeof e.data !== "string") return;
+    try {
+      const m = JSON.parse(e.data);
+      if (m.idr) needKey = true;   // ライブ表示が始まった：次のフレームを、必ず IDR（キーフレーム）にする
+      if (m.send_fps) { liveOn = !!m.live; applySendFps(m.send_fps); }
+    } catch {}
+  };
+  ws.onclose = (e) => {
+    setConn(false, running ? "再接続中…" : "停止中");
+    if (e.code === 4409) { $("mainMsg").textContent = "この端末は別の画面で送信中です"; stop(); return; }
+    if (e.code === 4404) { $("mainMsg").textContent = "サーバーに登録がありません。登録し直してください"; stop(); return; }
+    if (running) setTimeout(() => running && connectWs(), 2000);
+  };
+}
+
+async function start(opts = {}) {
+  if (running) {
+    if (liveSession && !opts.live) { stop(); await start(); }   // プレビュー専用の配信中に「送信を開始」→ 通常の送信（認識する）に切り替える
+    return;
+  }
+  liveSession = !!opts.live;
+  if (!stream && !testUrl) await openCamera();
+  if (!stream && !testUrl) { liveSession = false; return; }
+  const v = $("video");
+  $("mainMsg").textContent = ""; $("diag").textContent = "符号化の設定を探しています…";
+  if (typeof VideoEncoder === "undefined") {   // HTTP（http://IP:8000）で開くと、ブラウザが符号化の機能を隠す
+    $("mainMsg").textContent = `このページでは映像を符号化できません。HTTPS で開いてください → https://${location.hostname}:8000`;
+    liveSession = false; running = false;
+    return;
+  }
+  const { cfg, w, h, tried } = await pickEncoderConfig(v.videoWidth & ~1, v.videoHeight & ~1);
+  if (!cfg) {
+    $("mainMsg").textContent = "この端末のブラウザは、H.264 の符号化に対応していません（下の情報を開発者に伝えてください）";
+    $("diag").textContent = `${navigator.userAgent}\n映像 ${v.videoWidth}x${v.videoHeight} ／ 試した組み合わせ（全て×）: ${tried.length} 通り\n` +
+      tried.slice(0, 6).join("\n") + (tried.length > 6 ? "\n…" : "");
+    liveSession = false;
+    return;
+  }
+  const useAvcc = cfg.avc.format === "avc";
+  $("diag").textContent = `符号化: ${cfg.codec} ／ ${w}×${h} ／ ${useAvcc ? "AVCC→Annex B 変換" : "Annex B"} ／ ${cfg.hardwareAcceleration === "prefer-software" ? "ソフトウェア" : "自動"}` +
+    (tried.length ? `（${tried.length} 通りを試して決定）` : "");
+  let avcParams = null;
+
+  running = true; sent = skipped = bytes = frameNo = 0; bytesAt = performance.now(); needKey = true;
+  syncFsToggle();
+  encoder = new VideoEncoder({
+    output: (chunk, meta) => {
+      let buf = new Uint8Array(chunk.byteLength); chunk.copyTo(buf);
+      if (useAvcc) {
+        if (meta?.decoderConfig?.description) avcParams = parseAvcC(meta.decoderConfig.description);
+        if (!avcParams) return;                                   // SPS/PPS がまだ分からない
+        buf = avccToAnnexB(buf, avcParams, chunk.type === "key");
+      }
+      if (ws && ws.readyState === WebSocket.OPEN && ws.bufferedAmount < MAX_BUFFERED) { ws.send(buf); sent++; bytes += buf.length; }
+      else { skipped++; needKey = true; }   // 欠けたら、次のフレームをキーフレームにして復帰できるようにする
+    },
+    error: (e) => { $("mainMsg").textContent = "符号化エラー: " + e.message; stop(); },
+  });
+  encoder.configure(cfg);
+  baseBitrate = cfg.bitrate; curFps = liveSession ? (opts.fps || 30) : SEND_FPS; liveOn = false; capW = w; capH = h;
+  encCfg = cfg;
+  if (curFps !== SEND_FPS) {      // 最初から高い fps で始める（ライブ表示のための配信）
+    encCfg = { ...cfg, framerate: curFps, bitrate: Math.round(Math.min(4_000_000, baseBitrate * (1 + (curFps - SEND_FPS) / 12.5))) };
+    encoder.configure(encCfg);
+  }
+  capCanvas = new OffscreenCanvas(w, h); capCtx = capCanvas.getContext("2d");
+  timer = setInterval(captureTick, 1000 / curFps);
+  connectWs();
+  try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {}
+}
+
+// 1フレーム撮って符号化する
+function captureTick() {
+  if (!encoder || encoder.encodeQueueSize > 3) { skipped++; return; }
+  capCtx.drawImage($("video"), 0, 0, capW, capH);
+  const frame = new VideoFrame(capCanvas, { timestamp: Math.round(performance.now() * 1000) });
+  const key = needKey || frameNo % Math.round(KEYFRAME_SECONDS * curFps) === 0;
+  encoder.encode(frame, { keyFrame: key }); frame.close();
+  if (key) needKey = false;
+  frameNo++;
+}
+
+const connText = () => liveSession ? `ライブ配信中 ${curFps}fps（プレビューのみ）` : `送信中 ${curFps}fps` + (liveOn ? "（ライブ）" : "");
+
+// 送る fps を変える（ライブ表示の開始・終了）。タイマーとエンコーダの設定を合わせ直し、次のフレームをキーフレームにする
+function applySendFps(n) {
+  n = Math.max(1, Math.min(30, Math.round(n)));
+  if (!running || !encoder || !encCfg || n === curFps) { setConn(true, connText()); return; }
+  curFps = n;
+  // fps が上がるぶん、ビットレートも上げる（5fps = 基準、30fps で 3 倍。上限 4Mbps）
+  const bitrate = Math.round(Math.min(4_000_000, baseBitrate * Math.max(1, 1 + (n - SEND_FPS) / 12.5)));
+  try { encoder.configure({ ...encCfg, framerate: n, bitrate }); }
+  catch (e) { $("mainMsg").textContent = "fps を切り替えられません: " + e.message; return; }
+  needKey = true;
+  clearInterval(timer); timer = setInterval(captureTick, 1000 / n);
+  setConn(true, connText());
+}
+
+function stop() {
+  running = false; clearInterval(timer); timer = null; curFps = SEND_FPS; liveOn = false; liveSession = false;
+  try { encoder?.close(); } catch {} encoder = null;
+  try { ws?.close(); } catch {} ws = null;
+  try { wakeLock?.release(); } catch {} wakeLock = null;
+  setConn(false, "待機中"); syncFsToggle();
+}
+document.addEventListener("visibilitychange", async () => {   // 画面を戻したら、スリープで外れた wake lock を取り直す
+  if (running && document.visibilityState === "visible") { try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {} }
+});
+
+$("resetBtn").onclick = async () => {
+  if (!confirm("この端末の IN / OUT の履歴（累計と通過の記録）を消します。フロアの人数の概算は変わりません。")) return;
+  try { await api(`/api/cameras/${cam.id}/reset`, { method: "POST" }); await refreshStats(); $("mainMsg").textContent = ""; }
+  catch (e) { $("mainMsg").textContent = "リセットできません: " + e.message; }
+};
+
+$("resetAllBtn").onclick = async () => {
+  if (!confirm("全部リセットします。\n・全端末の IN / OUT の履歴と累計\n・全フロアの人数の概算（0 に戻す）\n他の端末の分も消えます。元には戻せません。")) return;
+  if (!confirm("本当に全部リセットしますか？")) return;
+  try {
+    const r = await api("/api/reset-all", { method: "POST" });
+    await refreshStats(); $("mainMsg").textContent = `全部リセットしました（通過の記録 ${r.deleted_crossings} 件を削除）`;
+  } catch (e) { $("mainMsg").textContent = "リセットできません: " + e.message; }
+};
+
+$("unregisterBtn").onclick = async () => {
+  if (!confirm("この端末の登録を解除します。これまでの通過の記録は残ります。")) return;
+  stop();
+  try { await api(`/api/cameras/${cam.id}`, { method: "DELETE" }); } catch (e) { $("mainMsg").textContent = e.message; return; }
+  store.clear(); closeCtl(); cam = null;
+  closeStream();
+  $("main").classList.add("hidden"); $("setup").classList.remove("hidden"); document.body.classList.remove("inmain"); loadFloors();
+};
+
+/* ---------- 数える線（何本でも） ---------- */
+const lineMsg = (t) => { $("lineMsg").textContent = t; if (t) $("mainMsg").textContent = t; };   // 設定を開かなくても、メッセージが見えるように
+const newId = () => "l" + Math.random().toString(36).slice(2, 7);
+
+// 線を保存する。名前の重複などはサーバーが断るので、その理由を表示する
+async function saveLines() {
+  try {
+    const r = await api(`/api/cameras/${cam.id}`, { method: "PATCH", body: JSON.stringify({ lines }) });
+    lines = r.lines || []; renderLineList(); drawOverlay(); lineMsg("");
+  } catch (e) { lineMsg("線を保存できません: " + e.message); }
+}
+
+// 線の一覧（名前の入力・削除ボタン・線ごとの IN/OUT）
+function renderLineList() {
+  const box = $("lineList"); box.replaceChildren();
+  lines.forEach((ln, i) => {
+    const row = document.createElement("div"); row.className = "grow-row";
+    const name = Object.assign(document.createElement("input"), { value: ln.name, maxLength: 30 });
+    name.style.borderLeft = `6px solid ${LINE_COLORS[i % LINE_COLORS.length]}`;
+    name.onchange = () => { ln.name = name.value.trim() || `線${i + 1}`; saveLines(); };
+    const del = Object.assign(document.createElement("button"), { textContent: "✕", className: "iconbtn" });
+    del.onclick = () => {
+      if (lines.length <= 1) { lineMsg("線は 1 本以上必要です"); return; }
+      lines.splice(i, 1); saveLines();
+    };
+    const small = document.createElement("small"); small.dataset.line = ln.name;
+    row.append(name, del, small); box.append(row);
+  });
+  updateLineCounts();
+}
+
+// 線ごとの IN/OUT の件数（2 秒ごとに更新）
+function updateLineCounts() {
+  for (const el of $("lineList").querySelectorAll("small")) {
+    const c = lineCounts[el.dataset.line] || { in: 0, out: 0 };
+    el.textContent = `IN ${c.in} ／ OUT ${c.out}`;
+  }
+}
+
+// 線を 1 本足す。既存の線とかぶらないよう、少しずつ下にずらして置く
+$("anchorSel").onchange = () => api(`/api/cameras/${cam.id}`, { method: "PATCH", body: JSON.stringify({ anchor: $("anchorSel").value }) })
+  .then(() => lineMsg("")).catch(e => lineMsg("保存できません: " + e.message));
+
+
+/* ---------- プレビューの表示 ON/OFF ----------
+   スマホが熱くなるときは、プレビューを切る。画面への描画（映像・枠・線・数字）が止まり、送信はそのまま続く。 */
+function applyPreview() {
+  $("stage").classList.toggle("off", !previewOn); $("offNote").classList.toggle("hidden", previewOn);
+  $("previewBtn").textContent = previewOn ? "プレビュー: 表示中" : "プレビュー: 切っている";
+  if (previewOn) { drawOverlay(); }
+}
+$("previewBtn").onclick = () => {
+  previewOn = !previewOn; prefs.set({ preview: previewOn });
+  applyPreview();
+  lineMsg(previewOn ? "" : "プレビューを切りました。線を動かすときは、プレビューを表示してください。");
+};
+
+/* ---------- 設置画面の操作 ---------- */
+// 選んだ線を消すボタン：線を選んでいて、2 本以上あるときだけ出す（線は 1 本以上必要）
+function updateDelBtn() { drawOverlay(); }
+// 設定パネルの開け閉め
+$("menuBtn").onclick = () => $("sheet").classList.toggle("hidden");
+$("sheetClose").onclick = () => $("sheet").classList.add("hidden");
+// ブラウザの全画面（アドレスバーを消す）。「設置開始」を押したときにも自動で入る
+function enterFullscreen() { try { document.documentElement.requestFullscreen?.({ navigationUI: "hide" })?.catch(() => {}); } catch {} }
+$("fsBtn").onclick = () => (document.fullscreenElement ? document.exitFullscreen() : enterFullscreen());
+// 送信中は、操作の案内を隠す
+function syncFsToggle() {
+  $("guide").classList.toggle("hidden", running);
+  const r = $("runState");
+  r.classList.toggle("on", running && !liveSession);
+  r.textContent = running ? (liveSession ? "ライブ配信中" : "認識中") : "待機中";
+}
+
+/* ---------- 認識結果の表示（サーバーから 0.5 秒ごとに取る） ---------- */
+async function pollResult() {
+  if (!cam) { resultLoop = false; return; }
+  if (!previewOn) { setTimeout(pollResult, 1500); return; }   // プレビューを切っている間は、枠を描かないので取りに行かない
+  try {
+    const r = await api(`/api/cameras/${cam.id}/result`);
+    const now = performance.now();
+    if (r.published_ms !== resultStamp) { resultStamp = r.published_ms; resultChangedAt = now; }
+    const stale = r.stale || now - resultChangedAt > 3000;   // 3秒更新がなければ古い結果とみなす
+    result = stale ? null : r;
+    drawOverlay();
+    if (result) {
+      $("resultInfo").textContent = `検出 ${result.boxes.length} 人 ／ 認識の遅れ ${(result.lag_ms / 1000).toFixed(1)} 秒（推論 ${result.infer_ms}ms）`;
+      for (const e of result.events) {
+        const key = `${e.ts_ms}-${e.id}-${e.dir}`;
+        if (!seenEvents.has(key)) { seenEvents.add(key); if (seenEvents.size > 50) seenEvents.clear(); flash(e.dir, e.line); }
+      }
+    } else {
+      $("resultInfo").textContent = running ? "認識結果を待っています…" : "送信すると、認識結果がここに出ます";
+    }
+  } catch {}
+  setTimeout(pollResult, 500);
+}
+function flash(dir, lineName) {
+  flashDir = dir; flashUntil = performance.now() + 2000; setTimeout(drawOverlay, 2050);
+  refreshStats();   // 累計をすぐ取り直す
+  const f = $("flash"); f.textContent = (lineName ? lineName + " " : "") + (dir === "in" ? "IN ＋1" : "OUT ＋1"); f.className = "flash " + dir;
+  clearTimeout(flashTimer); flashTimer = setTimeout(() => { f.textContent = ""; }, 2000);
+}
+
+/* ---------- 状況の表示 ---------- */
+async function pollStats() {
+  if (!cam) { polling = false; return; }
+  const now = performance.now(), kbps = bytes * 8 / 1000 / ((now - bytesAt) / 1000);
+  $("sSent").textContent = sent; $("sSkipped").textContent = skipped;
+  $("sKbps").textContent = running && kbps ? Math.round(kbps) + " kbps" : "–";
+  bytes = 0; bytesAt = now;
+  await refreshStats();
+  setTimeout(pollStats, 2000);
+}
+async function refreshStats() {
+  if (!cam) return;
+  try {
+    const c = await api(`/api/cameras/${cam.id}`);
+    $("sDecoded").textContent = c.server.decoded; $("sDropped").textContent = c.server.dropped;
+    $("sInOut").textContent = `${c.in} / ${c.out}`;
+    counts = { in: c.in, out: c.out }; lineCounts = c.line_counts || {}; updateLineCounts();
+    const fe = floorEst = c.floor_estimate;
+    $("floorEst").textContent = `約 ${fe.count} 人`;
+    $("floorRange").textContent = fe.high > fe.low ? `範囲 ${fe.low}〜${fe.high}（${c.floor}階、通過 ${fe.crossings} 件）` : `（${c.floor}階）`;
+    drawOverlay();
+  } catch {}
+}
+
+/* ---------- 起動 ---------- */
+(async () => {
+  await loadFloors().catch(() => {});
+  const saved = store.get();
+  if (saved) {
+    try { enter(await api(`/api/cameras/${saved.id}`)); } catch { store.clear(); }
+  }
+})();
+</script>
+</body>
+</html>

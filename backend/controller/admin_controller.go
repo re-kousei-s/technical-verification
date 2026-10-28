@@ -1,0 +1,265 @@
+package controller
+
+import (
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/gorilla/websocket"
+	"github.com/labstack/echo/v4"
+
+	"humandetect/models"
+	"humandetect/repository"
+	"humandetect/services"
+	"humandetect/web"
+)
+
+// AdminController は、管理画面向けの入口。
+//
+//	一覧（/api/overview）、人数の補正・リセット、検出枠つきの画像、ライブ表示（H.264 の中継）
+type AdminController struct {
+	overview *services.OverviewService
+	floors   *services.FloorService
+	streams  *services.StreamService
+	cameras  *services.CameraService
+	db       *repository.DBRepository
+	queue    *repository.QueueRepository
+}
+
+func NewAdminController(overview *services.OverviewService, floors *services.FloorService,
+	streams *services.StreamService, cameras *services.CameraService, db *repository.DBRepository,
+	queue *repository.QueueRepository) *AdminController {
+	return &AdminController{overview, floors, streams, cameras, db, queue}
+}
+
+// Register は、ルーティングを登録する。
+func (a *AdminController) Register(e *echo.Echo) {
+	// 管理画面（React）。ページの切り替えは # 以降なので、入口は / だけでよい
+	adminFiles := http.FileServer(http.FS(web.AdminFS()))
+	serveAdmin := echo.WrapHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" { // 画面の本体は、いつも最新を読ませる（assets/ はファイル名にハッシュが付くので、そのままでよい）
+			w.Header().Set("Cache-Control", "no-store")
+		}
+		adminFiles.ServeHTTP(w, r)
+	}))
+	e.GET("/", serveAdmin)
+	e.GET("/assets/*", serveAdmin)
+	e.GET("/healthz", func(c echo.Context) error { return c.JSON(200, map[string]bool{"ok": true}) })
+
+	e.GET("/api/overview", a.getOverview)
+	e.GET("/api/camera/:id/frame.jpg", a.frame)
+	e.GET("/api/camera/:id/result", func(c echo.Context) error { return jsonResult(c, a.queue) })
+	e.GET("/api/crossings", a.crossings)
+
+	e.POST("/api/floors/:floor/count", a.setFloorCount)
+	e.POST("/api/floors/reset", a.resetFloors)
+	e.POST("/api/history/reset", a.resetHistory)
+	e.POST("/api/reset-all", a.resetAll)
+
+	e.PUT("/api/camera/:id/lines", a.putLines)          // 管理画面の線の編集
+	e.POST("/api/camera/:id/recognize", a.setRecognize) // 認識の開始・停止（スマホは、この指示に従う）
+	e.GET("/api/live/:id/info", a.liveInfo)
+	e.GET("/api/live/:id", a.liveWS) // H.264 の中継（WebSocket）
+}
+
+// getOverview は、一覧に出す情報すべて。管理画面が 2 秒ごとに読む。
+func (a *AdminController) getOverview(c echo.Context) error {
+	o, err := a.overview.Build(c.Request().Context())
+	if err != nil {
+		return fail(c, err)
+	}
+	return c.JSON(200, o)
+}
+
+// frame は、worker が描いた「検出枠つきの最新画像」。
+func (a *AdminController) frame(c echo.Context) error {
+	img := a.queue.Annotated(c.Request().Context(), c.Param("id"))
+	if img == nil {
+		return fail(c, &services.Error{Code: 404, Message: "まだ画像がない"})
+	}
+	c.Response().Header().Set("Cache-Control", "no-store")
+	return c.Blob(200, "image/jpeg", img)
+}
+
+// crossings は、通過の履歴。?limit=100&camera_id=...
+func (a *AdminController) crossings(c echo.Context) error {
+	limit, _ := strconv.Atoi(c.QueryParam("limit"))
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	rows, err := a.db.RecentCrossings(limit, c.QueryParam("camera_id"))
+	if err != nil {
+		return fail(c, err)
+	}
+	return c.JSON(200, rows)
+}
+
+// ---------------------------------------------------------------------------
+// 補正・リセット
+// ---------------------------------------------------------------------------
+
+// setFloorCount は、スタッフによる人数の補正。 POST /api/floors/2/count {"count": 12}
+func (a *AdminController) setFloorCount(c echo.Context) error {
+	floor, err := strconv.Atoi(c.Param("floor"))
+	if err != nil {
+		return fail(c, &services.Error{Code: 422, Message: "フロアは整数で指定する"})
+	}
+	var body struct {
+		Count int `json:"count"`
+	}
+	if err := c.Bind(&body); err != nil {
+		return fail(c, &services.Error{Code: 422, Message: "count を指定する"})
+	}
+	if err := a.floors.SetCount(floor, body.Count); err != nil {
+		return fail(c, err)
+	}
+	return c.JSON(200, map[string]int{"floor": floor, "count": body.Count})
+}
+
+// resetFloors は、全フロアの人数を 0 に戻す（閉場）。
+func (a *AdminController) resetFloors(c echo.Context) error {
+	n, err := a.floors.ResetFloors()
+	if err != nil {
+		return fail(c, err)
+	}
+	return c.JSON(200, map[string]int64{"reset": n})
+}
+
+// resetHistory は、IN/OUT の履歴を消す。 {} で全部、{"floor": 2}、{"camera_id": "..."}。
+func (a *AdminController) resetHistory(c echo.Context) error {
+	var body struct {
+		CameraID string `json:"camera_id"`
+		Floor    *int   `json:"floor"`
+	}
+	_ = c.Bind(&body)
+	n, err := a.floors.ResetHistory(body.CameraID, body.Floor)
+	if err != nil {
+		return fail(c, err)
+	}
+	return c.JSON(200, map[string]int64{"deleted_crossings": n})
+}
+
+// resetAll は、全部リセット。
+func (a *AdminController) resetAll(c echo.Context) error {
+	res, err := a.floors.ResetAll()
+	if err != nil {
+		return fail(c, err)
+	}
+	return c.JSON(200, res)
+}
+
+// ---------------------------------------------------------------------------
+// ライブ表示
+// ---------------------------------------------------------------------------
+
+// liveInfo は、ライブ表示の画面に出す状況。受信の状況に加えて、映像に重ねる「線」と IN/OUT を返す。
+func (a *AdminController) liveInfo(c echo.Context) error {
+	id := c.Param("id")
+	info, err := a.streams.LiveInfo(id)
+	if err != nil {
+		return fail(c, err)
+	}
+	lines := []models.Line{}
+	if cam, _ := a.cameras.Get(id); cam != nil {
+		lines = cam.Lines
+	}
+	state, _ := a.db.CameraState(id)
+	counts, _ := a.db.LineCounts(id)
+	if counts == nil {
+		counts = map[string]repository.LineCount{}
+	}
+	return c.JSON(200, struct {
+		services.LiveInfo
+		Lines      []models.Line                   `json:"lines"`       // 数える線（映像に重ねる）
+		In         int                             `json:"in"`          // この端末の累計 IN
+		Out        int                             `json:"out"`         // この端末の累計 OUT
+		LineCounts map[string]repository.LineCount `json:"line_counts"` // 線ごとの IN/OUT
+	}{info, lines, state.InCount, state.OutCount, counts})
+}
+
+// liveWS は、スマホから届いた H.264 を、デコードせずにそのまま管理画面へ流す。
+// バイナリメッセージ 1 つ = H.264 の 1 フレームぶん（Annex B）。デコードは管理画面のブラウザが行う。
+// 見ている間だけ、スマホに高い fps を頼む（services が視聴者の数を見て判断する）。
+func (a *AdminController) liveWS(c echo.Context) error {
+	conn := upgrade(c)
+	if conn == nil {
+		return nil
+	}
+	defer conn.Conn.Close()
+
+	id := c.Param("id")
+	viewer, err := a.streams.Subscribe(id)
+	if err != nil {
+		code, reason := closeCodeFor(err)
+		conn.closeWith(code, reason)
+		return nil
+	}
+	defer a.streams.Unsubscribe(id, viewer)
+
+	// 管理画面側が閉じたかを知るため、読み続ける（届くメッセージは使わない）
+	closed := make(chan struct{})
+	go func() {
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				close(closed)
+				return
+			}
+		}
+	}()
+
+	limit := time.NewTimer(a.streams.MaxLiveSeconds()) // 閉じ忘れ対策の上限
+	defer limit.Stop()
+	for {
+		select {
+		case chunk := <-viewer.C:
+			if err := conn.WriteBinary(chunk); err != nil {
+				return nil
+			}
+		case <-closed:
+			return nil
+		case <-limit.C:
+			conn.closeWith(websocket.CloseNormalClosure, "time limit")
+			return nil
+		}
+	}
+}
+
+// jsonResult は、worker が出した最新の認識結果をそのまま返す。無ければ「古い」扱いの空の結果。
+func jsonResult(c echo.Context, q *repository.QueueRepository) error {
+	c.Response().Header().Set("Cache-Control", "no-store")
+	if raw := q.Result(c.Request().Context(), c.Param("id")); raw != nil {
+		return c.JSONBlob(200, raw)
+	}
+	return c.JSON(200, map[string]any{"boxes": []any{}, "events": []any{}, "stale": true})
+}
+
+// putLines は、管理画面で編集した線を保存する（端末の設定の lines だけを更新）。
+// yaml で固定したカメラは、services 側で断られる。
+func (a *AdminController) putLines(c echo.Context) error {
+	var lines []models.Line
+	if err := c.Bind(&lines); err != nil {
+		return fail(c, &services.Error{Code: 422, Message: "JSON を読めない"})
+	}
+	cam, err := a.cameras.Update(c.Param("id"), services.CameraPatch{Lines: &lines})
+	if err != nil {
+		return fail(c, err)
+	}
+	return c.JSON(200, cam)
+}
+
+// setRecognize は、認識の開始・停止。 POST /api/camera/F2-789E/recognize {"on": true}
+// 状態を DB に残し、スマホの待機用の接続へ伝える（スマホは、「認識中」の間だけ映像を送る）。
+func (a *AdminController) setRecognize(c echo.Context) error {
+	var body struct {
+		On bool `json:"on"`
+	}
+	if err := c.Bind(&body); err != nil {
+		return fail(c, &services.Error{Code: 422, Message: "on を指定する"})
+	}
+	id := c.Param("id")
+	if err := a.cameras.SetRecognizing(id, body.On); err != nil {
+		return fail(c, err)
+	}
+	a.streams.SetRecognize(id, body.On)
+	return c.JSON(200, map[string]any{"id": id, "recognizing": body.On})
+}
