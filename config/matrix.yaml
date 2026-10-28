@@ -1,0 +1,101 @@
+# 検証条件（Stage 0：PCでのオフライン比較）
+# 検出（edge-device / server-model）と、追跡・判定（aggregator）は別々に回る。
+# 検出側の条件（モデル・分割・間引き）を変えたら検出からやり直し、
+# 追跡・線の条件（aggregator 以下）だけを変えたなら aggregator からやり直せばよい。
+
+# 送信メッセージの ts の起点（動画の0秒がこの時刻になる）
+ts_base: "2026-10-07T10:00:00+09:00"
+
+# 動画は data/videos/ 以下に置く。line は画面に対する割合 [x, y]（0〜1）で、始点→終点。
+# IN/OUT の向きは `aggregator/preview.py` で出る画像の矢印で確認する（矢印の向きに越えたら IN）。
+videos:
+  - id: sample_people_walking
+    file: samples/people-walking.mp4
+    camera_id: SAMPLE-1
+    floor: 1
+    line: [[0.0, 0.5], [1.0, 0.5]]
+    scene: sample        # stair_narrow / stair_wide / ev_hall など
+    crowd: normal        # empty / normal / crowded
+
+sampling:
+  # 1秒あたりの枚数。本番は 1〜2fps 想定、端末に余裕があれば 3〜5fps。
+  # 0 = 全フレーム（上限の参考。RF-DETR は CPU で1枚0.7〜数秒かかるので長い動画では重い）
+  fps: [1, 2, 3, 5]
+
+tiling:
+  modes: [none, 2x2, line]   # none / RxC（例 2x2）/ line（線の周りだけ切り出す）
+  overlap: 0.15              # RxC のとき、隣のタイルと重ねる割合
+  line_margin: 0.2           # line のとき、線の外側に足す余白（画面の縦横に対する割合）
+
+detector:
+  # 端末から送る最低スコア。ByteTrack は低スコアの検出も使うので低めに送り、
+  # 実際の閾値は aggregator のトラッカー設定で振る（再推論が不要になる）
+  min_score: 0.1
+
+# 系統B：エッジ端末役（MediaPipe）
+edge:
+  models: [ssd_mobilenet_v2_fp32, efficientdet_lite0_int8, efficientdet_lite2_int8]
+
+# 系統A：サーバー検出（RF-DETR、画像送信案のベースライン）
+server:
+  models: [rfdetr_nano, rfdetr_small, rfdetr_medium]
+
+# サーバー集計役：追跡＋ライン判定（両系統共通）
+aggregator:
+  # 線の通過を判定する、人物枠の点。全部の組み合わせで数える
+  #   bottom_center = 足元。床の線と対応が分かりやすいが、混雑すると足元が隠れやすい
+  #   top_center    = 頭（枠の上端）。高い位置から撮れば混雑でも隠れにくい
+  # 判定点を変えると、線を越える位置（画面上）も変わる。preview の画像で線の位置を確かめること
+  anchors: [bottom_center, top_center]
+  # 越えた側にこの秒数とどまってから数える（線の上での足元のぶれによる多重カウント対策）。
+  # 0 なら、越えたらすぐ数える。5fps で 0.3 秒だと 2 フレームとどまる必要があり、越えた直後にドアへ消える人を数えられない
+  # （実際の動画で確認）。そのため 0 にしている。線の上で立ち止まる人が多い場所では、0.4 などに上げる
+  min_crossing_seconds: 0.0
+  # 線のぎりぎり（人の枠の高さの何倍までを「線の際」とするか）。入口の足元に、ぎりぎりに線を置いても数えられるようにする。
+  #   際で見え始めた人が、際の外へ出たら、出た側へ越えたとして数える。際の外から来て、際の中で見えなくなった人は、反対側へ越えたとして数える。
+  #   線の上で立ち止まる人が多く、誤って数えるときは下げる。0 なら使わない（LineZone だけ）
+  edge_margin: 0.3
+  # 線の際で見えなくなった人を、何秒待ってから「本当に消えた」として数えるか（1〜2 秒）。待つ間に、同じ人がまた見えたり、
+  # すぐ近くに別の追跡IDで現れたりしたら、検出の取りこぼしとして、数えない。線へ向かって動いていた人だけを数える
+  edge_confirm_seconds: 1.5
+  trackers:
+    - name: bytetrack
+      type: bytetrack
+      params:
+        lost_track_seconds: 2.0       # 見失ってから何秒まで同じIDで待つか（フレーム数は間引きから計算）
+        track_activation_threshold: 0.4
+        high_conf_det_threshold: 0.4
+        minimum_consecutive_frames: 1 # 低いfpsでは2以上だと通過前に確定しないことがある
+        minimum_iou_threshold: 0.1
+    # 低fpsでは人が大きく動き IoU=0 になりやすいので、離れた箱も対応付けられる GIoU 版も比較する
+    - name: bytetrack_giou
+      type: bytetrack
+      params:
+        lost_track_seconds: 2.0
+        track_activation_threshold: 0.4
+        high_conf_det_threshold: 0.4
+        minimum_consecutive_frames: 1
+        minimum_iou_threshold: -0.5
+        iou: giou
+    # 低fps向けの自作トラッカー（aggregator/lowfps_tracker.py）。枠の重なりではなく、
+    # 予測位置との距離（枠の高さ何個分か）で対応付ける
+    - name: lowfps
+      type: lowfps
+      params:
+        lost_track_seconds: 2.0
+        # 追跡を作る最低の信頼度。暗いドアの中から出てくる人は、検出の信頼度が低い（0.14〜0.36）ので、0.4 だと追跡が確定する前に
+        # 線を越えてしまい、数えられない。0.25 にすると数えられ、誰も通らない線の誤検出や、混雑した広場の動画の数は変わらなかった（実測）
+        high_conf_det_threshold: 0.25
+        low_conf_det_threshold: 0.2
+        max_speed_heights_per_second: 1.5   # 1秒に枠の高さ何個分まで動けるとみなすか
+
+evaluation:
+  # エッジ系の誤差を比べる基準（サーバー系）
+  reference: {pipeline: server, model: rfdetr_medium}
+  pass_error_pct: 20         # IN/OUT 誤差の合格ライン（±%）
+  edge_vs_server_pt: 10      # エッジ系とサーバー系の誤差の差の許容（ポイント）
+  frame_count_score: 0.4     # フレーム人数の比較で「検出あり」とみなすスコア
+  # 間引きの影響（fps_consistency.csv）で、全フレームの通過イベントと同じとみなす範囲
+  reference_tracker: bytetrack   # 基準（全フレーム）を数えるトラッカー
+  match_max_seconds: 1.5
+  match_max_px: 100
