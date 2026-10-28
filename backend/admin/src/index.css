@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 色は「R G B」の 3 つの数字で持つ（Tailwind の不透明度指定 bg-primary/10 などが使えるように）。
+   ダークモードは OS の設定に合わせて、同じ名前の値だけ差し替える。 */
+:root {
+  --c-bg: 248 249 250;
+  --c-surface: 255 255 255;
+  --c-line: 218 220 224;
+  --c-ink: 32 33 36;
+  --c-sub: 95 99 104;
+  --c-primary: 26 115 232;
+  --c-primary-soft: 232 240 254;
+  --c-good: 30 142 62;
+  --c-good-soft: 230 244 234;
+  --c-warn: 227 116 0;
+  --c-warn-soft: 254 239 195;
+  --c-bad: 217 48 37;
+  --c-bad-soft: 252 232 230;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --c-bg: 24 25 28;
+    --c-surface: 32 33 36;
+    --c-line: 60 64 67;
+    --c-ink: 232 234 237;
+    --c-sub: 154 160 166;
+    --c-primary: 138 180 248;
+    --c-primary-soft: 41 58 87;
+    --c-good: 129 201 149;
+    --c-good-soft: 28 58 38;
+    --c-warn: 253 214 99;
+    --c-warn-soft: 66 52 16;
+    --c-bad: 242 139 130;
+    --c-bad-soft: 74 33 31;
+  }
+}
+html, body, #root { height: 100%; }
+body { @apply bg-bg text-ink font-sans text-sm antialiased; }
