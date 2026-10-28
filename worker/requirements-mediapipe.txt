@@ -1,0 +1,10 @@
+mediapipe==1.1.0
+numpy==2.5.3
+trackers==2.6.1
+supervision==0.30.8
+opencv-python-headless==5.0.0.93
+pyyaml==6.0.3
+redis==8.1.0
+psycopg[binary]==3.3.6
+fastapi==0.161.1
+uvicorn==0.54.0

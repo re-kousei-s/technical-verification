@@ -1,0 +1,14 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.14.1+cpu
+torchvision==0.29.1+cpu
+rfdetr==1.11.2
+transformers==5.19.0
+numpy==2.5.3
+trackers==2.6.1
+supervision==0.30.8
+opencv-python-headless==5.0.0.93
+pyyaml==6.0.3
+redis==8.1.0
+psycopg[binary]==3.3.6
+fastapi==0.161.1
+uvicorn==0.54.0
