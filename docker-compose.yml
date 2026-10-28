@@ -1,0 +1,119 @@
+# 人検出・通過カウント：スマホ（H.264）→ backend（Go）→ キュー（Redis）→ worker（Python）→ DB（PostgreSQL）
+#
+#   docker compose --profile live up -d --build
+#   スマホ : https://<このPCのIP>:8000       管理画面 : https://<このPCのIP>:8080（http:// で開いても、https:// に転送される）
+#   テスト送信 : docker compose --profile stream run --rm stream-test
+#
+# 構成
+#   backend  … Go。H.264 を受け、デコードして 5fps に間引きキューへ。ライブは H.264 をそのまま管理画面へ中継
+#   worker   … Python。キューから取り出して検出・追跡・判定し、DB を更新
+#   database … schema.sql（db-init が流す）      config … cameras.yaml / matrix.yaml
+
+services:
+  redis:
+    image: redis:7-alpine
+    profiles: ["live", "live-rfdetr"]
+    command: ["redis-server", "--save", "", "--appendonly", "no"]   # キューは揮発でよい（検証用）
+    healthcheck: {test: ["CMD", "redis-cli", "ping"], interval: 3s, timeout: 3s, retries: 10}
+
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["live", "live-rfdetr"]
+    environment:
+      POSTGRES_USER: hdt
+      POSTGRES_PASSWORD: hdt
+      POSTGRES_DB: hdt
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U hdt"], interval: 3s, timeout: 3s, retries: 10}
+
+  # スキーマを流す（何度流しても同じになるように書いてある）。他のサービスは、これが終わってから起動する
+  db-init:
+    image: postgres:16-alpine
+    profiles: ["live", "live-rfdetr"]
+    environment: {PGPASSWORD: hdt}
+    command: ["psql", "-h", "postgres", "-U", "hdt", "-d", "hdt", "-v", "ON_ERROR_STOP=1", "-f", "/schema.sql"]
+    volumes:
+      - ./database/schema.sql:/schema.sql:ro
+    depends_on: {postgres: {condition: service_healthy}}
+    restart: "no"
+
+  backend:
+    build: {context: ./backend}
+    image: hdt-backend
+    profiles: ["live", "live-rfdetr"]
+    environment: &env
+      DATABASE_URL: postgresql://hdt:hdt@postgres:5432/hdt
+      REDIS_URL: redis://redis:6379/0
+      CAMERAS_PATH: /config/cameras.yaml
+      PARTITIONS: "1"          # カメラを何本の worker に振り分けるか（worker の WORKER_PARTITIONS と合わせる）
+      MAX_QUEUE: "200"         # キューの上限（超えたら新しいフレームを捨てる）
+    expose: ["8000", "8080"]   # 外へは、gateway（HTTPS）だけが出す。コンテナ同士は、backend:8000 で直接つながる
+    volumes:
+      - ./config:/config:ro
+    depends_on:
+      redis: {condition: service_healthy}
+      db-init: {condition: service_completed_successfully}
+
+  # スマホ・管理画面用の HTTPS の入口（自己署名の証明書）。 8000（=8443）→ backend:8000 / 8080（=8444）→ backend:8080
+  gateway:
+    build: {context: ./backend/gateway}
+    image: hdt-gateway
+    profiles: ["live", "live-rfdetr"]
+    ports: ["8000:8000", "8080:8080", "8443:8443", "8444:8444"]
+    depends_on: [backend]
+
+  worker:
+    build: {context: ., dockerfile: worker/Dockerfile, args: {BACKEND: mediapipe}}
+    image: hdt-worker-mediapipe
+    profiles: ["live"]
+    cpus: 2
+    mem_limit: 4g
+    environment: &worker-env
+      <<: *env
+      CONFIG: /config/matrix.yaml
+      CAMERAS: /config/cameras.yaml
+      MODELS_DIR: /models
+      DETECTOR: efficientdet_lite0_int8     # MediaPipe のモデル名
+      WORKER_NAME: worker-mediapipe
+      WORKER_PARTITIONS: "0"
+    volumes: &worker-volumes
+      - ./config:/config:ro
+      - ./worker/common:/app/common:ro
+      - ./worker/aggregator:/app/aggregator:ro
+      - ./worker/libs:/app/libs:ro
+      - ./worker/worker.py:/app/worker.py:ro
+      - ./worker/models:/models
+    depends_on:
+      redis: {condition: service_healthy}
+      db-init: {condition: service_completed_successfully}
+
+  # RF-DETR で認識する版。`worker` と同じキューを取り合うので、どちらか一方だけ動かす
+  worker-rfdetr:
+    build: {context: ., dockerfile: worker/Dockerfile, args: {BACKEND: rfdetr}}
+    image: hdt-worker-rfdetr
+    profiles: ["live-rfdetr"]
+    cpus: 4
+    mem_limit: 8g
+    environment:
+      <<: *worker-env
+      DETECTOR: rfdetr_nano
+      WORKER_NAME: worker-rfdetr
+      OMP_NUM_THREADS: "4"
+    volumes: *worker-volumes
+    depends_on:
+      redis: {condition: service_healthy}
+      db-init: {condition: service_completed_successfully}
+
+  # テスト送信：動画ファイルを H.264 のストリームとして backend に流す（スマホの代わり）
+  stream-test:
+    build: {context: ./_unused/tools}
+    image: hdt-tools
+    profiles: ["stream"]
+    volumes:
+      - ./_unused/data:/data:ro
+      - ./_unused/tools:/app:ro      # テスト用のスクリプトを直したら、ビルドし直さずに使える
+    command: python stream_video.py /data/videos/samples/elevator_hall_h264_5fps.mp4 --url ws://backend:8000/ws/SAMPLE-1
+
+volumes:
+  pgdata:
