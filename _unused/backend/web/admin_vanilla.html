@@ -1,0 +1,574 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>人検出 ライブ検証</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1b1f24; --sub: #66707c; --line: #e3e6ea;
+    --blue: #2f7de1; --yellow: #d99a00; --red: #d93f3f; --ok: #1f9d55; --bad: #d93f3f;
+    --blue-bg: #e6f0fc; --yellow-bg: #fcf3d9; --red-bg: #fbe5e5; --none-bg: #eef0f2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171b; --card: #1d2127; --text: #e8ebef; --sub: #96a0ab; --line: #2d333b;
+      --blue: #5b9df0; --yellow: #f0b429; --red: #f06a6a; --ok: #3fbf7a; --bad: #f06a6a;
+      --blue-bg: #1c2b40; --yellow-bg: #3a3014; --red-bg: #40201f; --none-bg: #262b32;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+  main { max-width: 1280px; margin: 0 auto; padding: 16px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 12px; }
+  h1 { font-size: 18px; margin: 0 8px 0 0; }
+  h2 { font-size: 13px; margin: 0 0 8px; color: var(--sub); font-weight: 600; letter-spacing: .02em; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px;
+          background: var(--card); border: 1px solid var(--line); font-size: 12px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--sub); }
+  .ok .dot { background: var(--ok); } .bad .dot { background: var(--bad); }
+  .grow { flex: 1; }
+  #updated { color: var(--sub); font-size: 12px; }
+  .banner { background: var(--red-bg); color: var(--red); border: 1px solid var(--red); border-radius: 8px;
+            padding: 8px 12px; margin-bottom: 12px; }
+  .banner div + div { margin-top: 2px; }
+  section { margin-bottom: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  .floors { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+  .floor { border-radius: 10px; padding: 12px; border: 1px solid var(--line); background: var(--none-bg); }
+  .floor.blue { background: var(--blue-bg); border-color: var(--blue); }
+  .floor.yellow { background: var(--yellow-bg); border-color: var(--yellow); }
+  .floor.red { background: var(--red-bg); border-color: var(--red); }
+  .floor .n { font-size: 36px; font-weight: 700; line-height: 1.1; }
+  .floor .n small { font-size: 14px; font-weight: 600; color: var(--sub); }
+  .floor .t { font-size: 12px; color: var(--sub); }
+  .floor .range { font-size: 13px; margin-top: 2px; }
+  .floor .devs { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .floor .devs .pill { background: var(--card); }
+  .floor .act { margin-top: 8px; }
+  button.mini { font: inherit; font-size: 12px; padding: 3px 10px; border-radius: 8px; border: 1px solid var(--line);
+                background: var(--card); color: var(--text); cursor: pointer; }
+  .sec-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+  .sec-head h2 { margin: 0; }
+  .floor .lv { float: right; font-size: 12px; font-weight: 700; }
+  .blue .lv { color: var(--blue); } .yellow .lv { color: var(--yellow); } .red .lv { color: var(--red); }
+  .cams { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 12px; }
+  .cam img { width: 100%; border-radius: 6px; background: var(--none-bg); aspect-ratio: 16 / 9; object-fit: contain; display: block; }
+  .cam .noimg { width: 100%; aspect-ratio: 16 / 9; border-radius: 6px; background: var(--none-bg); color: var(--sub);
+                display: flex; align-items: center; justify-content: center; }
+  .cam .head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .cam .head b { font-size: 15px; }
+  .kv { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px 10px; margin-top: 8px; }
+  .kv div { font-size: 12px; color: var(--sub); } .kv b { display: block; font-size: 15px; color: var(--text); font-weight: 600; }
+  .warn { color: var(--bad) !important; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--sub); font-weight: 600; font-size: 12px; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 12px; }
+  .in { color: var(--ok); font-weight: 600; } .out { color: var(--red); font-weight: 600; }
+  .empty { color: var(--sub); padding: 8px; }
+  .scroll { overflow-x: auto; }
+  .modal { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,.82); display: flex; align-items: center; justify-content: center; padding: 12px; }
+  .modal.hidden, .top.hidden, #editBtn.hidden { display: none; }
+  .modal .box { background: var(--card); border: 1px solid var(--line); border-radius: 12px; width: min(1100px, 100%); max-height: 100%; display: flex; flex-direction: column; }
+  .modal .top { display: flex; align-items: center; gap: 12px; padding: 10px 14px; flex-wrap: wrap; }
+  .livewrap { position: relative; background: #000; min-height: 200px; }
+  /* 「大きく」：枠を画面いっぱいに広げ、映像の高さの上限も上げる */
+  .modal.big { padding: 0; }
+  .modal.big .box { width: 100vw; height: 100vh; max-height: 100vh; border-radius: 0; border: 0; }
+  .modal.big .livewrap { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0; }
+  .modal.big .livewrap #liveVideo { max-height: calc(100vh - 110px); width: auto; max-width: 100%; }
+  /* 「全画面」：ブラウザの全画面。映像を画面の中央に、できるだけ大きく */
+  .livewrap:fullscreen { display: flex; align-items: center; justify-content: center; }
+  .livewrap:fullscreen #liveVideo { max-height: 100vh; width: auto; max-width: 100vw; }
+  .livewrap #liveVideo { width: 100%; display: block; max-height: 78vh; object-fit: contain; background: #000; }
+  .livewrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .livewrap canvas.editing { pointer-events: auto; cursor: crosshair; touch-action: none; }
+  @media (max-width: 480px) { main { padding: 12px 16px; } .cams { grid-template-columns: 1fr; } .kv { grid-template-columns: repeat(2, 1fr); } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>人検出 ライブ検証</h1>
+    <span id="svc"></span>
+    <span class="grow"></span>
+    <span id="updated">読み込み中…</span>
+  </header>
+  <div id="problems"></div>
+
+  <section>
+    <div class="sec-head"><h2>フロアの人数の概算（全端末の IN − OUT の合算）</h2><span class="grow"></span>
+      <button class="mini" id="resetAll">全フロアを 0 に戻す（閉場）</button>
+      <button class="mini" id="resetHistoryAll">IN/OUT の履歴を全部消す</button>
+      <button class="mini" id="resetEverything">全部リセット</button></div>
+    <div id="floors" class="floors"></div>
+    <div class="t" style="color:var(--sub);font-size:12px;margin-top:6px">範囲は「補正してからの通過件数 × 誤差率（仮 20%）」。人が数えた人数で補正すると、範囲が小さくなる。
+      スマホの登録は <b id="senderUrl"></b> を開く。ライブ表示は、HTTPS（<b id="adminHttps"></b>）か localhost で開いたときだけ使える。</div>
+  </section>
+  <section><h2>カメラ</h2><div id="cams" class="cams"></div></section>
+
+  <section class="cols">
+    <div class="card"><h2>キュー（Redis Streams）</h2><div class="scroll" id="queue"></div></div>
+    <div class="card"><h2>worker</h2><div class="scroll" id="workers"></div></div>
+    <div class="card"><h2>直近60秒の処理</h2><div class="scroll" id="perf"></div></div>
+  </section>
+
+  <section class="card"><h2>直近の通過（新しい順）</h2><div class="scroll" id="crossings"></div></section>
+</main>
+
+<div id="live" class="modal hidden">
+  <div class="box">
+    <div class="top">
+      <b id="liveTitle"></b><span class="pill" id="liveState">接続中…</span>
+      <span class="t" id="liveInfo" style="color:var(--sub);font-size:12px"></span>
+      <span class="grow"></span>
+      <label style="font-size:12px;color:var(--sub)"><input type="checkbox" id="liveBoxes" checked> 認識結果（枠）を重ねる</label>
+      <button class="mini" id="editBtn">線を編集</button>
+      <button class="mini" id="liveBig">大きく</button>
+      <button class="mini" id="liveFull">全画面</button>
+      <button class="mini" id="liveClose">✕ 閉じる</button>
+    </div>
+    <div class="top hidden" id="editBar" style="gap:8px;flex-wrap:wrap">
+      <b>線の編集</b>
+      <button class="mini" id="editAdd">＋ 線を足す</button>
+      <button class="mini" id="editDel">選んだ線を消す</button>
+      <button class="mini" id="editRename">名前を変える</button>
+      <span class="t" id="editMsg" style="color:var(--sub);font-size:12px">端の○をドラッグで形を、線の上をドラッグで位置を動かします。入口の下に置いてください</span>
+      <span class="grow"></span>
+      <button class="mini" id="editSave">保存</button>
+      <button class="mini" id="editCancel">やめる</button>
+    </div>
+    <div class="livewrap"><canvas id="liveVideo"></canvas><canvas id="liveCv"></canvas></div>
+    <div class="t" style="color:var(--sub);font-size:12px;padding:8px 14px">この間だけ、端末は高い fps で送ります（閉じると、元に戻ります。認識は今までどおりの頻度）。映像はサーバーを素通りし、このブラウザがデコードします。
+      枠は認識の頻度でしか更新されないので、映像より遅れて動きます。</div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+async function resetHistory(scope, label) {
+  if (!confirm(`${label}の IN/OUT の履歴（通過の記録と、端末ごとの累計）を消します。\nフロアの人数の概算は変わりません。元には戻せません。`)) return;
+  const res = await fetch("/api/history/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(scope) });
+  if (!res.ok) { alert("リセットに失敗しました"); return; }
+  tick(true);
+}
+const el = (tag, attrs = {}, ...children) => {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") e.className = v; else if (k === "text") e.textContent = v; else e.setAttribute(k, v);
+  }
+  for (const c of children) if (c != null) e.append(c);
+  return e;
+};
+const fmt = (v, d = 0) => (v == null || Number.isNaN(+v)) ? "–" : (+v).toFixed(d);
+const ago = (ms) => ms == null ? "–" : ms < 1500 ? "今" : ms < 60000 ? `${(ms / 1000).toFixed(0)}秒前` : `${(ms / 60000).toFixed(0)}分前`;
+const clock = (iso) => { if (!iso) return "–"; const d = new Date(iso); return d.toLocaleTimeString("ja-JP", { hour12: false }); };
+const pill = (ok, label) => el("span", { class: "pill " + (ok ? "ok" : "bad") }, el("span", { class: "dot" }), label);
+
+function table(cols, rows, empty) {
+  if (!rows.length) return el("div", { class: "empty", text: empty });
+  const t = el("table");
+  t.append(el("thead", {}, el("tr", {}, ...cols.map(c => el("th", { class: c.num ? "num" : "", text: c.h })))));
+  const body = el("tbody");
+  for (const r of rows) body.append(el("tr", {}, ...cols.map(c => {
+    const v = c.f(r);
+    const td = el("td", { class: (c.num ? "num " : "") + (c.cls ? c.cls(r) : "") });
+    if (v instanceof Node) td.append(v); else td.textContent = v;
+    return td;
+  })));
+  t.append(body);
+  return t;
+}
+
+function render(d) {
+  const s = d.services;
+  $("svc").replaceChildren(
+    pill(s.ingest, "ingest"), pill(s.redis, "Redis"), pill(s.postgres, "Postgres"),
+    pill(s.workers_alive > 0, `worker ${s.workers_alive}/${s.workers_total}`));
+  $("problems").replaceChildren(...(d.problems.length
+    ? [el("div", { class: "banner" }, ...d.problems.map(p => el("div", { text: p })))] : []));
+
+  $("floors").replaceChildren(...(d.floors.length ? d.floors.map(f => {
+    const lv = { blue: "青", yellow: "黄", red: "赤" }[f.level];
+    const devs = f.cameras.map(c => el("span", { class: "pill " + (c.connected ? "ok" : "") },
+      el("span", { class: "dot" }), `${c.name || c.id}`));
+    const fix = el("button", { class: "mini", text: "人数を補正" });
+    fix.onclick = async () => {
+      const v = prompt(`${f.floor}階の人数を、実際の人数に直します`, String(f.count));
+      if (v === null) return;
+      const n = parseInt(v, 10);
+      if (Number.isNaN(n) || n < 0) { alert("0 以上の整数を入力してください"); return; }
+      await fetch(`/api/floors/${f.floor}/count`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ count: n }) });
+      tick(true);
+    };
+    return el("div", { class: "floor " + (f.level || "") },
+      lv ? el("span", { class: "lv", text: lv }) : null,
+      el("div", { class: "t", text: `${f.floor}階` + (f.thresholds ? ` ／ 黄${f.thresholds.yellow} 赤${f.thresholds.red}（仮）` : "") }),
+      el("div", { class: "n" }, "約 " + f.count, el("small", { text: " 人" })),
+      el("div", { class: "range", text: f.margin ? `範囲 ${f.low}〜${f.high} 人（通過 ${f.crossings_since_correction} 件）` : "範囲 ±0（通過 0 件）" }),
+      el("div", { class: "devs" }, ...(devs.length ? devs : [el("span", { class: "t", text: "端末なし" })])),
+      el("div", { class: "act" }, fix, " ", (() => {
+        const b = el("button", { class: "mini", text: "IN/OUT 履歴を消す" });
+        b.onclick = () => resetHistory({ floor: f.floor }, `${f.floor}階`); return b; })()));
+  }) : [el("div", { class: "empty", text: "まだ端末が登録されていません" })]));
+
+  $("cams").replaceChildren(...d.cameras.map(c => {
+    const live = c.connected, age = c.last_seen_age_ms;
+    const img = c.has_image
+      ? el("img", { src: `/api/camera/${encodeURIComponent(c.id)}/frame.jpg?t=${d.now_ms}`, alt: c.id })
+      : el("div", { class: "noimg", text: live ? "最初のフレームを待っています" : "未接続" });
+    const kv = (k, v, cls) => el("div", {}, k, el("b", { class: cls || "", text: v }));
+    return el("div", { class: "card cam" },
+      el("div", { class: "head" }, el("b", { text: c.id }), pill(live, live ? "接続中" : "切断"),
+        el("span", { class: "grow" }), el("span", { class: "t", style: "color:var(--sub);font-size:12px",
+          text: `${c.floor}階 ／ ${c.sample_fps}fps ／ ${c.tracker} ／ ` + `線 ${c.lines.length}本（${c.lines.join("、")}）・` + (c.anchor === "top_center" ? "頭" : "足元") })),
+      img,
+      el("div", { class: "act", style: "margin-top:8px" }, (() => {
+        const lb = el("button", { class: "mini", text: `ライブ（${d.live_fps || 30}fps）` });
+        lb.onclick = () => openLive(c); return lb; })(), " ", (() => {
+        const b = el("button", { class: "mini", text: "IN/OUT 履歴を消す" });
+        b.onclick = () => resetHistory({ camera_id: c.id }, c.name || c.id); return b; })()),
+      el("div", { class: "kv" },
+        kv("IN", c.in, "in"), kv("OUT", c.out, "out"),
+        kv("検出 / 追跡", `${fmt(c.last_dets)} / ${fmt(c.last_tracks)}`),
+        kv("最終受信", ago(age)),
+        kv("デコード", c.decoded), kv("キュー投入", c.enqueued),
+        kv("破棄", c.dropped, c.dropped ? "warn" : ""), kv("デコード失敗", c.decode_errors, c.decode_errors ? "warn" : "")));
+  }));
+
+  $("queue").replaceChildren(table([
+    { h: "パーティション", f: q => `p${q.partition}` },
+    { h: "待ち", num: 1, f: q => q.length },
+    { h: "処理中（未ACK）", num: 1, f: q => q.pending },
+    { h: "未配信", num: 1, f: q => q.lag ?? "–" },
+  ], d.queue, "キューなし"));
+
+  $("workers").replaceChildren(table([
+    { h: "名前", f: w => w.name },
+    { h: "状態", f: w => w.alive ? "稼働" : "停止", cls: w => w.alive ? "in" : "out" },
+    { h: "検出器", f: w => w.detector },
+    { h: "担当", f: w => `p${w.partitions}` },
+    { h: "処理", num: 1, f: w => w.processed },
+    { h: "失敗", num: 1, f: w => w.errors, cls: w => +w.errors ? "warn" : "" },
+    { h: "推論ms", num: 1, f: w => w.infer_ms_avg },
+    { h: "遅れms", num: 1, f: w => w.lag_ms_avg },
+  ], d.workers, "worker が登録されていません"));
+
+  const p = d.perf_60s || {};
+  const rows = [
+    ["処理したフレーム", p.frames ?? 0], ["1秒あたり", fmt((p.frames || 0) / 60, 2)],
+    ["推論 平均 / p95 (ms)", `${fmt(p.infer_avg)} / ${fmt(p.infer_p95)}`],
+    ["遅れ 平均 / p95 (ms)", `${fmt(p.lag_avg)} / ${fmt(p.lag_p95)}`],
+    ["1フレームの検出数（平均）", fmt(p.dets_avg, 1)],
+    ["累計 通過 / フレーム", `${d.totals.crossings ?? 0} / ${d.totals.frames ?? 0}`],
+  ];
+  $("perf").replaceChildren(table([{ h: "項目", f: r => r[0] }, { h: "値", num: 1, f: r => r[1] }], rows, ""));
+
+  $("crossings").replaceChildren(table([
+    { h: "時刻", f: c => clock(c.ts) }, { h: "カメラ", f: c => c.camera_id }, { h: "階", f: c => c.floor ?? "–" },
+    { h: "どの線", f: c => c.line_name || "–" },
+    { h: "向き", f: c => c.direction.toUpperCase(), cls: c => c.direction }, { h: "追跡ID", num: 1, f: c => c.track_id },
+  ], d.recent_crossings, "まだ通過がありません"));
+
+  $("updated").textContent = "更新 " + new Date(d.now_ms).toLocaleTimeString("ja-JP", { hour12: false });
+}
+
+/* ---------- ライブ表示 ----------
+   バックエンドが中継する H.264（Annex B）を WebSocket で受け取り、このブラウザの VideoDecoder（WebCodecs）でデコードして canvas に描く。
+   サーバーはデコードしない（届いたデータをそのまま流すだけ）。WebCodecs は、HTTPS か localhost でしか使えない。 */
+let liveMeta = null;   // /api/live/:id/info の内容（映像に重ねる線と IN/OUT を含む）
+let liveCam = null, liveTimers = [], liveWs = null, liveDec = null, liveGotKey = false, liveShown = 0, liveShownAt = performance.now(), liveFps = null;
+
+// H.264 のデータ（Annex B）の中の NAL ユニットを順に見て、キーフレーム（種類 5）と SPS（種類 7）を探す
+function scanNals(buf) {
+  let key = false, sps = null;
+  for (let i = 0; i + 3 < buf.length; i++) {
+    if (buf[i] === 0 && buf[i + 1] === 0 && buf[i + 2] === 1) {
+      const type = buf[i + 3] & 0x1f;
+      if (type === 5) key = true;
+      if (type === 7) sps = buf.subarray(i + 3, i + 3 + 4);   // [NALヘッダ, profile, 制約, level]
+      i += 2;
+    }
+  }
+  return { key, sps };
+}
+const hex2 = (n) => n.toString(16).padStart(2, "0");
+
+function liveMessage(text) { $("liveState").className = "pill bad"; $("liveState").textContent = text; }
+
+// 受け取った 1 チャンク（= 1 フレーム）をデコーダに渡す
+function liveFeed(buf) {
+  const { key, sps } = scanNals(buf);
+  if (!liveDec) {
+    if (!key) return;                                  // デコードはキーフレームから始める
+    const codec = sps ? `avc1.${hex2(sps[1])}${hex2(sps[2])}${hex2(sps[3])}` : "avc1.42001f";   // SPS の先頭 3 バイトが、コーデック名になる
+    const cv = $("liveVideo"), g = cv.getContext("2d");
+    liveDec = new VideoDecoder({
+      output: (frame) => {                             // デコードできた 1 枚を canvas に描く
+        if (cv.width !== frame.displayWidth || cv.height !== frame.displayHeight) { cv.width = frame.displayWidth; cv.height = frame.displayHeight; }
+        g.drawImage(frame, 0, 0); frame.close(); liveShown++;
+      },
+      error: (e) => { liveDec = null; liveGotKey = false; },   // 壊れたら捨てて、次のキーフレームからやり直す
+    });
+    liveDec.configure({ codec, optimizeForLatency: true });
+  }
+  if (!liveGotKey && !key) return;
+  liveGotKey = true;
+  try { liveDec.decode(new EncodedVideoChunk({ type: key ? "key" : "delta", timestamp: Math.round(performance.now() * 1000), data: buf })); }
+  catch { liveDec = null; liveGotKey = false; }
+}
+
+function openLive(c) {
+  liveCam = c; $("liveTitle").textContent = `${c.name || c.id}（${c.floor}階）`;
+  $("live").classList.remove("hidden"); $("liveState").className = "pill"; $("liveState").textContent = "接続中…"; $("liveInfo").textContent = "";
+  if (!("VideoDecoder" in window)) {
+    liveMessage("この画面ではデコードできません");
+    $("liveInfo").textContent = `WebCodecs は HTTPS か localhost でだけ使えます。https://${location.hostname}:8444 で開いてください`;
+    return;
+  }
+  liveDec = null; liveGotKey = false; liveShown = 0; liveShownAt = performance.now(); liveFps = null;
+  liveWs = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/live/${encodeURIComponent(c.id)}`);
+  liveWs.binaryType = "arraybuffer";
+  liveWs.onmessage = (e) => liveFeed(new Uint8Array(e.data));
+  liveTimers.push(setInterval(liveInfoTick, 1000), setInterval(liveBoxesTick, 250));
+  liveInfoTick();
+}
+function closeLive() {
+  endEdit();
+  liveTimers.forEach(clearInterval); liveTimers = []; liveCam = null;
+  try { liveWs?.close(); } catch {} liveWs = null;       // 閉じると、見ている人が 0 になり、端末は元の fps に戻る
+  try { liveDec?.close(); } catch {} liveDec = null;
+  if (document.fullscreenElement) document.exitFullscreen();
+  $("live").classList.remove("big"); $("liveBig").textContent = "大きく";
+  $("live").classList.add("hidden");
+  for (const id of ["liveCv", "liveVideo"]) { const cv = $(id); cv.getContext("2d").clearRect(0, 0, cv.width, cv.height); }
+}
+$("liveClose").onclick = closeLive;
+
+// 大きさの切り替え。「大きく」は枠を画面いっぱいに広げる。「全画面」はブラウザの全画面（映像をダブルクリックでも切り替わる）
+function toggleBig() {
+  const big = $("live").classList.toggle("big");
+  $("liveBig").textContent = big ? "小さく" : "大きく";
+}
+function toggleFullscreen() {
+  const wrap = document.querySelector(".livewrap");
+  if (document.fullscreenElement) document.exitFullscreen();
+  else if (wrap.requestFullscreen) wrap.requestFullscreen().catch(() => {});
+}
+$("liveBig").onclick = toggleBig;
+$("liveFull").onclick = toggleFullscreen;
+$("liveVideo").ondblclick = toggleFullscreen;
+$("live").onclick = (e) => { if (e.target === $("live")) closeLive(); };
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && liveCam) closeLive(); });
+
+/* ---- 線の編集（管理画面のマウス操作） ----
+   編集中は editLines（座標は 0〜1 の割合）を描き、保存で PUT /api/camera/:id/lines に送る。 */
+let editLines = null, editSel = -1, editDrag = null, liveLayout = null;
+function editMsg(t, bad) { const m = $("editMsg"); m.textContent = t; m.style.color = bad ? "#ff3b30" : "var(--sub)"; }
+function startEdit() {
+  editLines = JSON.parse(JSON.stringify(liveMeta?.lines || []));
+  editSel = editLines.length ? 0 : -1;
+  $("editBar").classList.remove("hidden"); $("editBtn").classList.add("hidden");
+  $("liveCv").classList.add("editing");
+}
+function endEdit() {
+  editLines = null; editSel = -1; editDrag = null;
+  $("editBar").classList.add("hidden"); $("editBtn").classList.remove("hidden");
+  $("liveCv").classList.remove("editing");
+}
+// 画面上の位置 → 映像上の割合（0〜1）
+function editPos(e) {
+  const r = $("liveCv").getBoundingClientRect(), L = liveLayout;
+  const x = (e.clientX - r.left - L.ox) / L.dw, y = (e.clientY - r.top - L.oy) / L.dh;
+  return [Math.min(1, Math.max(0, x)), Math.min(1, Math.max(0, y)), L];
+}
+// 点 p から線分 a-b までの距離（画面の px）
+function segDist(px, py, a, b) {
+  const dx = b[0] - a[0], dy = b[1] - a[1], t = Math.max(0, Math.min(1, ((px - a[0]) * dx + (py - a[1]) * dy) / (dx * dx + dy * dy || 1)));
+  return Math.hypot(px - a[0] - t * dx, py - a[1] - t * dy);
+}
+$("liveCv").addEventListener("pointerdown", (e) => {
+  if (!editLines || !liveLayout) return;
+  const [fx, fy, L] = editPos(e), px = fx * L.dw, py = fy * L.dh;
+  let hit = null;
+  // 端の○を先に探し（15px 以内）、なければ線の上（10px 以内）を探す
+  editLines.forEach((ln, i) => ln.line.forEach((pt, k) => {
+    const d = Math.hypot(px - pt[0] * L.dw, py - pt[1] * L.dh);
+    if (d < 15 && (!hit || d < hit.d)) hit = { i, k, d };
+  }));
+  if (!hit) editLines.forEach((ln, i) => {
+    const d = segDist(px, py, [ln.line[0][0] * L.dw, ln.line[0][1] * L.dh], [ln.line[1][0] * L.dw, ln.line[1][1] * L.dh]);
+    if (d < 10 && (!hit || d < hit.d)) hit = { i, k: -1, d };   // k=-1 は、線ごと動かす
+  });
+  if (!hit) return;
+  editSel = hit.i; editDrag = { ...hit, fx, fy, orig: JSON.parse(JSON.stringify(editLines[hit.i].line)) };
+  $("liveCv").setPointerCapture(e.pointerId);
+});
+$("liveCv").addEventListener("pointermove", (e) => {
+  if (!editDrag) return;
+  const [fx, fy] = editPos(e), ln = editLines[editDrag.i], o = editDrag.orig;
+  if (editDrag.k >= 0) { ln.line[editDrag.k] = [fx, fy]; return; }
+  // 線ごと動かす。はみ出さないよう、動かせる量を絞る
+  let dx = fx - editDrag.fx, dy = fy - editDrag.fy;
+  const xs = o.map(p => p[0]), ys = o.map(p => p[1]);
+  dx = Math.max(-Math.min(...xs), Math.min(1 - Math.max(...xs), dx));
+  dy = Math.max(-Math.min(...ys), Math.min(1 - Math.max(...ys), dy));
+  ln.line = o.map(p => [p[0] + dx, p[1] + dy]);
+});
+$("liveCv").addEventListener("pointerup", () => { editDrag = null; });
+$("editBtn").onclick = startEdit;
+$("editCancel").onclick = endEdit;
+$("editAdd").onclick = () => {
+  if (editLines.length >= 12) return editMsg("線は 12 本までです", true);
+  let n = editLines.length + 1; while (editLines.some(l => l.name === `線${n}`)) n++;
+  const y = Math.min(0.9, 0.5 + editLines.length * 0.06);
+  editLines.push({ id: "l" + Date.now().toString(36), name: `線${n}`, line: [[0.3, y], [0.6, y]] }); editSel = editLines.length - 1;
+  editMsg("足しました。入口の下に動かしてください");
+};
+$("editDel").onclick = () => {
+  if (editLines.length < 2) return editMsg("線は最低 1 本必要です", true);
+  if (editSel < 0) return editMsg("消す線を、先に選んでください", true);
+  editLines.splice(editSel, 1); editSel = Math.min(editSel, editLines.length - 1);
+};
+$("editRename").onclick = () => {
+  if (editSel < 0) return editMsg("名前を変える線を、先に選んでください", true);
+  const n = prompt("線の名前（例：階段の入口、EV6）", editLines[editSel].name);
+  if (n && n.trim()) editLines[editSel].name = n.trim();
+};
+$("editSave").onclick = async () => {
+  try {
+    const r = await fetch(`/api/camera/${encodeURIComponent(liveCam.id)}/lines`, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(editLines) });
+    if (!r.ok) { const j = await r.json().catch(() => ({})); return editMsg(j.detail || j.error || j.message || `保存できません（${r.status}）`, true); }
+    endEdit(); liveInfoTick();   // 保存した線を、すぐ映像に反映する（認識側は数秒で切り替わる）
+  } catch { editMsg("保存できません（通信エラー）", true); }
+};
+
+async function liveInfoTick() {
+  if (!liveCam) return;
+  // 表示できているフレームレート（このブラウザが実際に描いた数）
+  const now = performance.now(); liveFps = liveShown / ((now - liveShownAt) / 1000); liveShown = 0; liveShownAt = now;
+  try {
+    const i = liveMeta = await (await fetch(`/api/live/${encodeURIComponent(liveCam.id)}/info`, { cache: "no-store" })).json();
+    const st = $("liveState");
+    if (i.streaming) {
+      st.className = "pill ok";
+      st.textContent = i.mode === "live" ? "ライブ中（プレビューのみ・認識なし）" : "ライブ中（送信中の端末）";
+      $("liveInfo").textContent = `要求 ${i.requested_fps}fps ／ 受信 ${i.rx_fps != null ? i.rx_fps.toFixed(1) : "–"}fps ／ 表示 ${liveFps.toFixed(1)}fps`;
+    } else if (i.ctl_online) {
+      st.className = "pill"; st.textContent = "端末に配信を頼んでいます…"; $("liveInfo").textContent = "スマホの送信ページが開いていれば、数秒で映ります";
+    } else {
+      st.className = "pill bad"; st.textContent = "端末が待機していません";
+      $("liveInfo").textContent = "スマホで送信ページを開いておいてください（画面は点けたまま）";
+    }
+  } catch {}
+}
+// 映像の上に、線・IN/OUT・認識結果（枠）を重ねる（0.25 秒ごと）
+const LIVE_LINE_COLORS = ["#ff3b30", "#ffcc00", "#00c7ff", "#ff7ad9", "#7dff7a", "#b388ff"];
+async function liveBoxesTick() {
+  const cv = $("liveCv"), vid = $("liveVideo"), g = cv.getContext("2d");
+  const w = vid.clientWidth, h = vid.clientHeight;
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  g.clearRect(0, 0, w, h);
+  if (!liveCam || !vid.width) return;
+
+  // 映像は枠の中に収まるよう縮めて表示される（object-fit: contain）ので、その表示範囲を求める
+  const ar = vid.width / vid.height, boxAr = w / h;
+  const dw = ar > boxAr ? w : h * ar, dh = ar > boxAr ? w / ar : h, ox = (w - dw) / 2, oy = (h - dh) / 2;
+
+  liveLayout = { ox, oy, dw, dh };
+  drawLiveLines(g, ox, oy, dw, dh);
+  if (!editLines) drawLiveCounts(g, ox, oy, dh);   // 編集中は、数字を出さない（線が見えにくくなるため）
+
+  if (!$("liveBoxes").checked) return;
+  try {
+    const r = await (await fetch(`/api/camera/${encodeURIComponent(liveCam.id)}/result`, { cache: "no-store" })).json();
+    if (!r.boxes || r.stale) return;
+    g.lineWidth = 2; g.strokeStyle = "#34c759"; g.fillStyle = "#34c759"; g.font = "bold 12px system-ui";
+    for (const [x1, y1, x2, y2, id] of r.boxes) {
+      g.strokeRect(ox + x1 * dw, oy + y1 * dh, (x2 - x1) * dw, (y2 - y1) * dh);
+      if (id >= 0) g.fillText("#" + id, ox + x1 * dw + 2, oy + y1 * dh - 3);
+    }
+  } catch {}
+}
+
+// 数える線を描く。線ごとに色を変え、始点のそばに名前、中央に IN の向きの矢印を描く
+function drawLiveLines(g, ox, oy, dw, dh) {
+  for (const [i, ln] of (editLines || liveMeta?.lines || []).entries()) {
+    const col = LIVE_LINE_COLORS[i % LIVE_LINE_COLORS.length];
+    const P = ln.line.map(([x, y]) => [ox + x * dw, oy + y * dh]);
+    g.lineWidth = 3; g.strokeStyle = col; g.beginPath(); g.moveTo(...P[0]); g.lineTo(...P[1]); g.stroke();
+    // IN の向き = 始点→終点に対して画面の左側（サーバーの LineZone と同じ）
+    const dx = P[1][0] - P[0][0], dy = P[1][1] - P[0][1], len = Math.hypot(dx, dy) || 1;
+    const nx = dy / len, ny = -dx / len, mx = (P[0][0] + P[1][0]) / 2, my = (P[0][1] + P[1][1]) / 2, L = 34;
+    g.strokeStyle = g.fillStyle = "#34c759"; g.lineWidth = 4;
+    g.beginPath(); g.moveTo(mx - nx * L / 2, my - ny * L / 2); g.lineTo(mx + nx * L / 2, my + ny * L / 2); g.stroke();
+    g.beginPath(); g.moveTo(mx + nx * (L / 2 + 10), my + ny * (L / 2 + 10));
+    g.lineTo(mx + nx * L / 2 - ny * 8, my + ny * L / 2 + nx * 8); g.lineTo(mx + nx * L / 2 + ny * 8, my + ny * L / 2 - nx * 8); g.fill();
+    g.font = "bold 13px system-ui"; g.fillText("IN", mx + nx * (L / 2 + 16) - 8, my + ny * (L / 2 + 16) + 5);
+    g.fillStyle = "#ff9500"; g.fillText("OUT", mx - nx * (L / 2 + 18) - 12, my - ny * (L / 2 + 18) + 5);
+    g.fillStyle = col; g.fillText(ln.name, P[0][0] + 8, P[0][1] - 10);
+    const sel = editLines && i === editSel;
+    for (const [x, y] of P) {
+      g.beginPath(); g.arc(x, y, editLines ? 10 : 6, 0, 7); g.fillStyle = col; g.fill();
+      if (sel) { g.lineWidth = 3; g.strokeStyle = "#fff"; g.stroke(); }   // 選んでいる線は、白い縁で目立たせる
+    }
+  }
+}
+
+// 左上に、この端末の累計 IN / OUT と、線ごとの IN/OUT を出す
+function drawLiveCounts(g, ox, oy, dh) {
+  if (!liveMeta) return;
+  const fs = Math.max(14, Math.min(dh * 0.06, 30));   // 映像の高さに合わせて文字の大きさを変える
+  const rows = [[`IN ${liveMeta.in}   OUT ${liveMeta.out}`, fs, null]];
+  for (const [i, ln] of (liveMeta.lines || []).entries()) {
+    if ((liveMeta.lines || []).length < 2) break;   // 線が 1 本なら、合計と同じなので出さない
+    const c = (liveMeta.line_counts || {})[ln.name] || { in: 0, out: 0 };
+    rows.push([`${ln.name}  IN ${c.in} / OUT ${c.out}`, fs * 0.55, LIVE_LINE_COLORS[i % LIVE_LINE_COLORS.length]]);
+  }
+  g.textBaseline = "top";
+  const widths = rows.map(([t, size]) => { g.font = `700 ${size}px system-ui`; return g.measureText(t).width; });
+  const pad = fs * 0.4, wBox = Math.max(...widths) + pad * 2, hBox = rows.reduce((a, [, size]) => a + size * 1.3, 0) + pad;
+  g.fillStyle = "rgba(0,0,0,.6)"; g.beginPath(); if (g.roundRect) g.roundRect(ox + 8, oy + 8, wBox, hBox, 8); else g.rect(ox + 8, oy + 8, wBox, hBox); g.fill();
+  let y = oy + 8 + pad / 2;
+  for (const [t, size, col] of rows) {
+    g.font = `700 ${size}px system-ui`; g.fillStyle = col || "#fff"; g.fillText(t, ox + 8 + pad, y); y += size * 1.3;
+  }
+  g.textBaseline = "alphabetic";
+}
+
+$("adminHttps").textContent = `https://${location.hostname}:8444`;
+$("senderUrl").textContent = `https://${location.hostname}:8443`;
+$("resetEverything").onclick = async () => {
+  if (!confirm("全部リセットします。\n・全端末の IN/OUT の履歴と累計\n・全フロアの人数の概算（0 に戻す）\n元には戻せません。")) return;
+  await fetch("/api/reset-all", { method: "POST" });
+  tick(true);
+};
+$("resetHistoryAll").onclick = () => resetHistory({}, "全端末");
+$("resetAll").onclick = async () => {
+  if (!confirm("全フロアの人数を 0 に戻します。")) return;
+  await fetch("/api/floors/reset", { method: "POST" });
+  tick(true);
+};
+
+let failures = 0, timerId = null;
+async function tick(now) {
+  clearTimeout(timerId);
+  try {
+    const res = await fetch("/api/overview", { cache: "no-store" });
+    if (!res.ok) throw new Error(res.status);
+    render(await res.json());
+    failures = 0;
+  } catch (e) {
+    failures++;
+    $("updated").textContent = `dashboard に接続できません（${failures}回目）`;
+  }
+  timerId = setTimeout(tick, 2000);
+}
+tick();
+</script>
+</body>
+</html>

@@ -1,0 +1,40 @@
+package services
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"time"
+)
+
+// VisionClient は、画像からドアの四角を探す Python のサービス（vision）を呼ぶ。
+// 四角検出は OpenCV を使うので、Go ではなく Python 側に置いている。
+type VisionClient struct {
+	baseURL string
+	http    *http.Client
+}
+
+func NewVisionClient(baseURL string) *VisionClient {
+	return &VisionClient{baseURL: baseURL, http: &http.Client{Timeout: 30 * time.Second}}
+}
+
+// DetectGates は、JPEG を送り、四角の候補（JSON）を受け取る。
+func (v *VisionClient) DetectGates(ctx context.Context, jpeg []byte) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, v.baseURL+"/detect", bytes.NewReader(jpeg))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "image/jpeg")
+	resp, err := v.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("四角検出サービスに繋がらない: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, &Error{Code: resp.StatusCode, Message: string(body)}
+	}
+	return body, nil
+}

@@ -1,0 +1,9 @@
+fastapi==0.161.1
+uvicorn[standard]==0.54.0
+websockets==17.3
+av==19.0.2
+redis==8.1.0
+opencv-python-headless==5.0.0.93
+numpy==2.5.4
+pyyaml==6.0.3
+psycopg[binary]==3.3.6

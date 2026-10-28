@@ -1,0 +1,68 @@
+# docker-compose.yml から外した、オフライン検証（Stage 0）のサービス定義。
+# 戻すときは、x-env を docker-compose.yml の先頭に、services を services: の下に足す。
+# プロファイル: edge / server / aggregate / eval（`docker compose --profile edge run --rm edge-device` など）
+
+x-env: &env
+  CONFIG: /configs/matrix.yaml
+  PYTHONPATH: /app
+
+services:
+  edge-device:
+    environment: *env
+    build: {context: ., dockerfile: offline/edge_device/Dockerfile}
+    image: hdt-edge
+    profiles: ["edge"]
+    cpus: 2              # スマホ相当ではない。PCが速すぎないよう絞るだけ
+    mem_limit: 4g
+    volumes:
+      - ./data:/data:ro
+      - ./configs:/configs:ro
+      - ./shared/common:/app/common:ro
+      - ./outputs:/outputs
+      - ./offline/edge_device:/app/edge_device:ro
+      - ./models:/models
+    command: python edge_device/run.py
+
+  server-model:
+    build: {context: ., dockerfile: offline/server_model/Dockerfile}
+    image: hdt-server
+    profiles: ["server"]
+    cpus: 4              # c7i.xlarge の 4vCPU を意識した制限（速度は同じにならない）
+    mem_limit: 8g
+    environment:
+      <<: *env
+      OMP_NUM_THREADS: "4"
+    volumes:
+      - ./data:/data:ro
+      - ./configs:/configs:ro
+      - ./shared/common:/app/common:ro
+      - ./outputs:/outputs
+      - ./offline/server_model:/app/server_model:ro
+      - ./models:/models
+    command: python server_model/run.py
+
+  aggregator:
+    environment: *env
+    build: {context: ., dockerfile: shared/aggregator/Dockerfile}
+    image: hdt-agg
+    profiles: ["aggregate"]
+    volumes:
+      - ./data:/data:ro
+      - ./configs:/configs:ro
+      - ./shared/common:/app/common:ro
+      - ./outputs:/outputs
+      - ./shared/aggregator:/app/aggregator:ro
+    command: python aggregator/run.py
+
+  evaluator:
+    environment: *env
+    build: {context: ., dockerfile: offline/evaluator/Dockerfile}
+    image: hdt-eval
+    profiles: ["eval"]
+    volumes:
+      - ./data:/data:ro
+      - ./configs:/configs:ro
+      - ./shared/common:/app/common:ro
+      - ./outputs:/outputs
+      - ./offline/evaluator:/app/evaluator:ro
+    command: python evaluator/evaluate.py

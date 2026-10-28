@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>人検出 ライブ検証</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1b1f24; --sub: #66707c; --line: #e3e6ea;
+    --blue: #2f7de1; --yellow: #d99a00; --red: #d93f3f; --ok: #1f9d55; --bad: #d93f3f;
+    --blue-bg: #e6f0fc; --yellow-bg: #fcf3d9; --red-bg: #fbe5e5; --none-bg: #eef0f2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171b; --card: #1d2127; --text: #e8ebef; --sub: #96a0ab; --line: #2d333b;
+      --blue: #5b9df0; --yellow: #f0b429; --red: #f06a6a; --ok: #3fbf7a; --bad: #f06a6a;
+      --blue-bg: #1c2b40; --yellow-bg: #3a3014; --red-bg: #40201f; --none-bg: #262b32;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+  main { max-width: 1280px; margin: 0 auto; padding: 16px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 12px; }
+  h1 { font-size: 18px; margin: 0 8px 0 0; }
+  h2 { font-size: 13px; margin: 0 0 8px; color: var(--sub); font-weight: 600; letter-spacing: .02em; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px;
+          background: var(--card); border: 1px solid var(--line); font-size: 12px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--sub); }
+  .ok .dot { background: var(--ok); } .bad .dot { background: var(--bad); }
+  .grow { flex: 1; }
+  #updated { color: var(--sub); font-size: 12px; }
+  .banner { background: var(--red-bg); color: var(--red); border: 1px solid var(--red); border-radius: 8px;
+            padding: 8px 12px; margin-bottom: 12px; }
+  .banner div + div { margin-top: 2px; }
+  section { margin-bottom: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  .floors { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+  .floor { border-radius: 10px; padding: 12px; border: 1px solid var(--line); background: var(--none-bg); }
+  .floor.blue { background: var(--blue-bg); border-color: var(--blue); }
+  .floor.yellow { background: var(--yellow-bg); border-color: var(--yellow); }
+  .floor.red { background: var(--red-bg); border-color: var(--red); }
+  .floor .n { font-size: 36px; font-weight: 700; line-height: 1.1; }
+  .floor .n small { font-size: 14px; font-weight: 600; color: var(--sub); }
+  .floor .t { font-size: 12px; color: var(--sub); }
+  .floor .range { font-size: 13px; margin-top: 2px; }
+  .floor .devs { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .floor .devs .pill { background: var(--card); }
+  .floor .act { margin-top: 8px; }
+  button.mini { font: inherit; font-size: 12px; padding: 3px 10px; border-radius: 8px; border: 1px solid var(--line);
+                background: var(--card); color: var(--text); cursor: pointer; }
+  .sec-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+  .sec-head h2 { margin: 0; }
+  .floor .lv { float: right; font-size: 12px; font-weight: 700; }
+  .blue .lv { color: var(--blue); } .yellow .lv { color: var(--yellow); } .red .lv { color: var(--red); }
+  .cams { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 12px; }
+  .cam img { width: 100%; border-radius: 6px; background: var(--none-bg); aspect-ratio: 16 / 9; object-fit: contain; display: block; }
+  .cam .noimg { width: 100%; aspect-ratio: 16 / 9; border-radius: 6px; background: var(--none-bg); color: var(--sub);
+                display: flex; align-items: center; justify-content: center; }
+  .cam .head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .cam .head b { font-size: 15px; }
+  .kv { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px 10px; margin-top: 8px; }
+  .kv div { font-size: 12px; color: var(--sub); } .kv b { display: block; font-size: 15px; color: var(--text); font-weight: 600; }
+  .warn { color: var(--bad) !important; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--sub); font-weight: 600; font-size: 12px; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 12px; }
+  .in { color: var(--ok); font-weight: 600; } .out { color: var(--red); font-weight: 600; }
+  .empty { color: var(--sub); padding: 8px; }
+  .scroll { overflow-x: auto; }
+  .modal { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,.82); display: flex; align-items: center; justify-content: center; padding: 12px; }
+  .modal.hidden { display: none; }
+  .modal .box { background: var(--card); border: 1px solid var(--line); border-radius: 12px; width: min(1100px, 100%); max-height: 100%; display: flex; flex-direction: column; }
+  .modal .top { display: flex; align-items: center; gap: 12px; padding: 10px 14px; flex-wrap: wrap; }
+  .livewrap { position: relative; background: #000; min-height: 200px; }
+  .livewrap img { width: 100%; display: block; max-height: 78vh; object-fit: contain; }
+  .livewrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  @media (max-width: 480px) { main { padding: 12px 16px; } .cams { grid-template-columns: 1fr; } .kv { grid-template-columns: repeat(2, 1fr); } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>人検出 ライブ検証</h1>
+    <span id="svc"></span>
+    <span class="grow"></span>
+    <span id="updated">読み込み中…</span>
+  </header>
+  <div id="problems"></div>
+
+  <section>
+    <div class="sec-head"><h2>フロアの人数の概算（全端末の IN − OUT の合算）</h2><span class="grow"></span>
+      <button class="mini" id="resetAll">全フロアを 0 に戻す（閉場）</button>
+      <button class="mini" id="resetHistoryAll">IN/OUT の履歴を全部消す</button>
+      <button class="mini" id="resetEverything">全部リセット</button></div>
+    <div id="floors" class="floors"></div>
+    <div class="t" style="color:var(--sub);font-size:12px;margin-top:6px">範囲は「補正してからの通過件数 × 誤差率（仮 20%）」。人が数えた人数で補正すると、範囲が小さくなる。
+      スマホの登録は <b id="senderUrl"></b> を開く。</div>
+  </section>
+  <section><h2>カメラ</h2><div id="cams" class="cams"></div></section>
+
+  <section class="cols">
+    <div class="card"><h2>キュー（Redis Streams）</h2><div class="scroll" id="queue"></div></div>
+    <div class="card"><h2>worker</h2><div class="scroll" id="workers"></div></div>
+    <div class="card"><h2>直近60秒の処理</h2><div class="scroll" id="perf"></div></div>
+  </section>
+
+  <section class="card"><h2>直近の通過（新しい順）</h2><div class="scroll" id="crossings"></div></section>
+</main>
+
+<div id="live" class="modal hidden">
+  <div class="box">
+    <div class="top">
+      <b id="liveTitle"></b><span class="pill" id="liveState">接続中…</span>
+      <span class="t" id="liveInfo" style="color:var(--sub);font-size:12px"></span>
+      <span class="grow"></span>
+      <label style="font-size:12px;color:var(--sub)"><input type="checkbox" id="liveBoxes" checked> 認識結果（枠）を重ねる</label>
+      <button class="mini" id="liveClose">✕ 閉じる</button>
+    </div>
+    <div class="livewrap"><img id="liveImg" alt=""><canvas id="liveCv"></canvas></div>
+    <div class="t" style="color:var(--sub);font-size:12px;padding:8px 14px">この間だけ、端末は高い fps で送ります（閉じると、数秒で元に戻ります。認識は今までどおりの頻度）。
+      枠は認識の頻度でしか更新されないので、映像より遅れて動きます。</div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+async function resetHistory(scope, label) {
+  if (!confirm(`${label}の IN/OUT の履歴（通過の記録と、端末ごとの累計）を消します。\nフロアの人数の概算は変わりません。元には戻せません。`)) return;
+  const res = await fetch("/api/history/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(scope) });
+  if (!res.ok) { alert("リセットに失敗しました"); return; }
+  tick(true);
+}
+const el = (tag, attrs = {}, ...children) => {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") e.className = v; else if (k === "text") e.textContent = v; else e.setAttribute(k, v);
+  }
+  for (const c of children) if (c != null) e.append(c);
+  return e;
+};
+const fmt = (v, d = 0) => (v == null || Number.isNaN(+v)) ? "–" : (+v).toFixed(d);
+const ago = (ms) => ms == null ? "–" : ms < 1500 ? "今" : ms < 60000 ? `${(ms / 1000).toFixed(0)}秒前` : `${(ms / 60000).toFixed(0)}分前`;
+const clock = (iso) => { if (!iso) return "–"; const d = new Date(iso); return d.toLocaleTimeString("ja-JP", { hour12: false }); };
+const pill = (ok, label) => el("span", { class: "pill " + (ok ? "ok" : "bad") }, el("span", { class: "dot" }), label);
+
+function table(cols, rows, empty) {
+  if (!rows.length) return el("div", { class: "empty", text: empty });
+  const t = el("table");
+  t.append(el("thead", {}, el("tr", {}, ...cols.map(c => el("th", { class: c.num ? "num" : "", text: c.h })))));
+  const body = el("tbody");
+  for (const r of rows) body.append(el("tr", {}, ...cols.map(c => {
+    const v = c.f(r);
+    const td = el("td", { class: (c.num ? "num " : "") + (c.cls ? c.cls(r) : "") });
+    if (v instanceof Node) td.append(v); else td.textContent = v;
+    return td;
+  })));
+  t.append(body);
+  return t;
+}
+
+function render(d) {
+  const s = d.services;
+  $("svc").replaceChildren(
+    pill(s.ingest, "ingest"), pill(s.redis, "Redis"), pill(s.postgres, "Postgres"),
+    pill(s.workers_alive > 0, `worker ${s.workers_alive}/${s.workers_total}`));
+  $("problems").replaceChildren(...(d.problems.length
+    ? [el("div", { class: "banner" }, ...d.problems.map(p => el("div", { text: p })))] : []));
+
+  $("floors").replaceChildren(...(d.floors.length ? d.floors.map(f => {
+    const lv = { blue: "青", yellow: "黄", red: "赤" }[f.level];
+    const devs = f.cameras.map(c => el("span", { class: "pill " + (c.connected ? "ok" : "") },
+      el("span", { class: "dot" }), `${c.name || c.id}`));
+    const fix = el("button", { class: "mini", text: "人数を補正" });
+    fix.onclick = async () => {
+      const v = prompt(`${f.floor}階の人数を、実際の人数に直します`, String(f.count));
+      if (v === null) return;
+      const n = parseInt(v, 10);
+      if (Number.isNaN(n) || n < 0) { alert("0 以上の整数を入力してください"); return; }
+      await fetch(`/api/floors/${f.floor}/count`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ count: n }) });
+      tick(true);
+    };
+    return el("div", { class: "floor " + (f.level || "") },
+      lv ? el("span", { class: "lv", text: lv }) : null,
+      el("div", { class: "t", text: `${f.floor}階` + (f.thresholds ? ` ／ 黄${f.thresholds.yellow} 赤${f.thresholds.red}（仮）` : "") }),
+      el("div", { class: "n" }, "約 " + f.count, el("small", { text: " 人" })),
+      el("div", { class: "range", text: f.margin ? `範囲 ${f.low}〜${f.high} 人（通過 ${f.crossings_since_correction} 件）` : "範囲 ±0（通過 0 件）" }),
+      el("div", { class: "devs" }, ...(devs.length ? devs : [el("span", { class: "t", text: "端末なし" })])),
+      el("div", { class: "act" }, fix, " ", (() => {
+        const b = el("button", { class: "mini", text: "IN/OUT 履歴を消す" });
+        b.onclick = () => resetHistory({ floor: f.floor }, `${f.floor}階`); return b; })()));
+  }) : [el("div", { class: "empty", text: "まだ端末が登録されていません" })]));
+
+  $("cams").replaceChildren(...d.cameras.map(c => {
+    const live = c.connected, age = c.last_seen_age_ms;
+    const img = c.has_image
+      ? el("img", { src: `/api/camera/${encodeURIComponent(c.id)}/frame.jpg?t=${d.now_ms}`, alt: c.id })
+      : el("div", { class: "noimg", text: live ? "最初のフレームを待っています" : "未接続" });
+    const kv = (k, v, cls) => el("div", {}, k, el("b", { class: cls || "", text: v }));
+    return el("div", { class: "card cam" },
+      el("div", { class: "head" }, el("b", { text: c.id }), pill(live, live ? "接続中" : "切断"),
+        el("span", { class: "grow" }), el("span", { class: "t", style: "color:var(--sub);font-size:12px",
+          text: `${c.floor}階 ／ ${c.sample_fps}fps ／ ${c.tracker} ／ ` + (c.gates.length ? `ゲート ${c.gates.length}（${c.gates.join("、")}）` : (c.anchor === "top_center" ? "線・頭" : "線・足元")) })),
+      img,
+      el("div", { class: "act", style: "margin-top:8px" }, (() => {
+        const lb = el("button", { class: "mini", text: `ライブ（${d.live_fps || 30}fps）` });
+        lb.onclick = () => openLive(c); return lb; })(), " ", (() => {
+        const b = el("button", { class: "mini", text: "IN/OUT 履歴を消す" });
+        b.onclick = () => resetHistory({ camera_id: c.id }, c.name || c.id); return b; })()),
+      el("div", { class: "kv" },
+        kv("IN", c.in, "in"), kv("OUT", c.out, "out"),
+        kv("検出 / 追跡", `${fmt(c.last_dets)} / ${fmt(c.last_tracks)}`),
+        kv("最終受信", ago(age)),
+        kv("デコード", c.decoded), kv("キュー投入", c.enqueued),
+        kv("破棄", c.dropped, c.dropped ? "warn" : ""), kv("デコード失敗", c.decode_errors, c.decode_errors ? "warn" : "")));
+  }));
+
+  $("queue").replaceChildren(table([
+    { h: "パーティション", f: q => `p${q.partition}` },
+    { h: "待ち", num: 1, f: q => q.length },
+    { h: "処理中（未ACK）", num: 1, f: q => q.pending },
+    { h: "未配信", num: 1, f: q => q.lag ?? "–" },
+  ], d.queue, "キューなし"));
+
+  $("workers").replaceChildren(table([
+    { h: "名前", f: w => w.name },
+    { h: "状態", f: w => w.alive ? "稼働" : "停止", cls: w => w.alive ? "in" : "out" },
+    { h: "検出器", f: w => w.detector },
+    { h: "担当", f: w => `p${w.partitions}` },
+    { h: "処理", num: 1, f: w => w.processed },
+    { h: "失敗", num: 1, f: w => w.errors, cls: w => +w.errors ? "warn" : "" },
+    { h: "推論ms", num: 1, f: w => w.infer_ms_avg },
+    { h: "遅れms", num: 1, f: w => w.lag_ms_avg },
+  ], d.workers, "worker が登録されていません"));
+
+  const p = d.perf_60s || {};
+  const rows = [
+    ["処理したフレーム", p.frames ?? 0], ["1秒あたり", fmt((p.frames || 0) / 60, 2)],
+    ["推論 平均 / p95 (ms)", `${fmt(p.infer_avg)} / ${fmt(p.infer_p95)}`],
+    ["遅れ 平均 / p95 (ms)", `${fmt(p.lag_avg)} / ${fmt(p.lag_p95)}`],
+    ["1フレームの検出数（平均）", fmt(p.dets_avg, 1)],
+    ["累計 通過 / フレーム", `${d.totals.crossings ?? 0} / ${d.totals.frames ?? 0}`],
+  ];
+  $("perf").replaceChildren(table([{ h: "項目", f: r => r[0] }, { h: "値", num: 1, f: r => r[1] }], rows, ""));
+
+  $("crossings").replaceChildren(table([
+    { h: "時刻", f: c => clock(c.ts) }, { h: "カメラ", f: c => c.camera_id }, { h: "階", f: c => c.floor ?? "–" },
+    { h: "どこで", f: c => c.gate || "線" },
+    { h: "向き", f: c => c.direction.toUpperCase(), cls: c => c.direction }, { h: "追跡ID", num: 1, f: c => c.track_id },
+  ], d.recent_crossings, "まだ通過がありません"));
+
+  $("updated").textContent = "更新 " + new Date(d.now_ms).toLocaleTimeString("ja-JP", { hour12: false });
+}
+
+/* ---------- ライブ表示 ---------- */
+let liveCam = null, liveTimers = [];
+function openLive(c) {
+  liveCam = c; $("liveTitle").textContent = `${c.name || c.id}（${c.floor}階）`;
+  $("live").classList.remove("hidden"); $("liveState").textContent = "接続中…"; $("liveInfo").textContent = "";
+  $("liveImg").src = `/api/live/${encodeURIComponent(c.id)}/stream?t=${Date.now()}`;
+  liveTimers.push(setInterval(liveInfoTick, 1000), setInterval(liveBoxesTick, 250));
+  liveInfoTick();
+}
+function closeLive() {
+  liveTimers.forEach(clearInterval); liveTimers = []; liveCam = null;
+  $("liveImg").removeAttribute("src");       // 読み込みを止める → サーバーが見ている合図を止め、端末は元の fps に戻る
+  $("live").classList.add("hidden");
+  const cv = $("liveCv"); cv.getContext("2d").clearRect(0, 0, cv.width, cv.height);
+}
+$("liveClose").onclick = closeLive;
+$("live").onclick = (e) => { if (e.target === $("live")) closeLive(); };
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && liveCam) closeLive(); });
+async function liveInfoTick() {
+  if (!liveCam) return;
+  try {
+    const i = await (await fetch(`/api/live/${encodeURIComponent(liveCam.id)}/info`, { cache: "no-store" })).json();
+    const st = $("liveState");
+    if (i.streaming) {
+      st.className = "pill ok";
+      st.textContent = i.mode === "live" ? "ライブ中（プレビューのみ・認識なし）" : "ライブ中（送信中の端末）";
+      $("liveInfo").textContent = `要求 ${i.requested_fps}fps ／ 受信 ${i.rx_fps ?? "–"}fps`;
+    } else if (i.ctl_online) {
+      st.className = "pill"; st.textContent = "端末に配信を頼んでいます…"; $("liveInfo").textContent = "スマホの送信ページが開いていれば、数秒で映ります";
+    } else {
+      st.className = "pill bad"; st.textContent = "端末が待機していません";
+      $("liveInfo").textContent = "スマホで送信ページを開いておいてください（画面は点けたまま）";
+    }
+  } catch {}
+}
+async function liveBoxesTick() {
+  const cv = $("liveCv"), img = $("liveImg"), g = cv.getContext("2d");
+  const w = img.clientWidth, h = img.clientHeight;
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  g.clearRect(0, 0, w, h);
+  if (!liveCam || !$("liveBoxes").checked || !img.naturalWidth) return;
+  try {
+    const r = await (await fetch(`/api/camera/${encodeURIComponent(liveCam.id)}/result`, { cache: "no-store" })).json();
+    if (!r.boxes || r.stale) return;
+    // 映像は枠の中に収まるよう縮めて表示される（object-fit: contain）ので、その表示範囲に合わせる
+    const ar = img.naturalWidth / img.naturalHeight, boxAr = w / h;
+    const dw = ar > boxAr ? w : h * ar, dh = ar > boxAr ? w / ar : h, ox = (w - dw) / 2, oy = (h - dh) / 2;
+    g.lineWidth = 2; g.strokeStyle = "#34c759"; g.fillStyle = "#34c759"; g.font = "bold 12px system-ui";
+    for (const [x1, y1, x2, y2, id] of r.boxes) {
+      g.strokeRect(ox + x1 * dw, oy + y1 * dh, (x2 - x1) * dw, (y2 - y1) * dh);
+      if (id >= 0) g.fillText("#" + id, ox + x1 * dw + 2, oy + y1 * dh - 3);
+    }
+  } catch {}
+}
+
+$("senderUrl").textContent = `https://${location.hostname}:8443`;
+$("resetEverything").onclick = async () => {
+  if (!confirm("全部リセットします。\n・全端末の IN/OUT の履歴と累計\n・全フロアの人数の概算（0 に戻す）\n元には戻せません。")) return;
+  await fetch("/api/reset-all", { method: "POST" });
+  tick(true);
+};
+$("resetHistoryAll").onclick = () => resetHistory({}, "全端末");
+$("resetAll").onclick = async () => {
+  if (!confirm("全フロアの人数を 0 に戻します。")) return;
+  await fetch("/api/floors/reset", { method: "POST" });
+  tick(true);
+};
+
+let failures = 0, timerId = null;
+async function tick(now) {
+  clearTimeout(timerId);
+  try {
+    const res = await fetch("/api/overview", { cache: "no-store" });
+    if (!res.ok) throw new Error(res.status);
+    render(await res.json());
+    failures = 0;
+  } catch (e) {
+    failures++;
+    $("updated").textContent = `dashboard に接続できません（${failures}回目）`;
+  }
+  timerId = setTimeout(tick, 2000);
+}
+tick();
+</script>
+</body>
+</html>
