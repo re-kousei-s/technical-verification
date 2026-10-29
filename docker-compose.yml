@@ -8,15 +8,18 @@
 #   backend  … Go。H.264 を受け、デコードして 5fps に間引きキューへ。ライブは H.264 をそのまま管理画面へ中継
 #   worker   … Python。キューから取り出して検出・追跡・判定し、DB を更新
 #   database … schema.sql（db-init が流す）      config … cameras.yaml / matrix.yaml
+#   ネットワーク … 名前付き（hdt-net）。コンテナ同士はサービス名で通信し、外へ公開するのは gateway の 4 ポートだけ
 
 services:
   redis:
+    networks: [hdt]
     image: redis:7-alpine
     profiles: ["live", "live-rfdetr"]
     command: ["redis-server", "--save", "", "--appendonly", "no"]   # キューは揮発でよい（検証用）
     healthcheck: {test: ["CMD", "redis-cli", "ping"], interval: 3s, timeout: 3s, retries: 10}
 
   postgres:
+    networks: [hdt]
     image: postgres:16-alpine
     profiles: ["live", "live-rfdetr"]
     environment:
@@ -29,6 +32,7 @@ services:
 
   # スキーマを流す（何度流しても同じになるように書いてある）。他のサービスは、これが終わってから起動する
   db-init:
+    networks: [hdt]
     image: postgres:16-alpine
     profiles: ["live", "live-rfdetr"]
     environment: {PGPASSWORD: hdt}
@@ -39,6 +43,7 @@ services:
     restart: "no"
 
   backend:
+    networks: [hdt]
     build: {context: ./backend}
     image: hdt-backend
     profiles: ["live", "live-rfdetr"]
@@ -48,7 +53,6 @@ services:
       CAMERAS_PATH: /config/cameras.yaml
       PARTITIONS: "1"          # カメラを何本の worker に振り分けるか（worker の WORKER_PARTITIONS と合わせる）
       MAX_QUEUE: "200"         # キューの上限（超えたら新しいフレームを捨てる）
-    expose: ["8000", "8080"]   # 外へは、gateway（HTTPS）だけが出す。コンテナ同士は、backend:8000 で直接つながる
     volumes:
       - ./config:/config:ro
     depends_on:
@@ -57,6 +61,7 @@ services:
 
   # スマホ・管理画面用の HTTPS の入口（自己署名の証明書）。 8000（=8443）→ backend:8000 / 8080（=8444）→ backend:8080
   gateway:
+    networks: [hdt]
     build: {context: ./backend/gateway}
     image: hdt-gateway
     profiles: ["live", "live-rfdetr"]
@@ -64,6 +69,7 @@ services:
     depends_on: [backend]
 
   worker:
+    networks: [hdt]
     build: {context: ., dockerfile: worker/Dockerfile, args: {BACKEND: mediapipe}}
     image: hdt-worker-mediapipe
     profiles: ["live"]
@@ -90,6 +96,7 @@ services:
 
   # RF-DETR で認識する版。`worker` と同じキューを取り合うので、どちらか一方だけ動かす
   worker-rfdetr:
+    networks: [hdt]
     build: {context: ., dockerfile: worker/Dockerfile, args: {BACKEND: rfdetr}}
     image: hdt-worker-rfdetr
     profiles: ["live-rfdetr"]
@@ -107,6 +114,7 @@ services:
 
   # テスト送信：動画ファイルを H.264 のストリームとして backend に流す（スマホの代わり）
   stream-test:
+    networks: [hdt]
     build: {context: ./_unused/tools}
     image: hdt-tools
     profiles: ["stream"]
@@ -114,6 +122,12 @@ services:
       - ./_unused/data:/data:ro
       - ./_unused/tools:/app:ro      # テスト用のスクリプトを直したら、ビルドし直さずに使える
     command: python stream_video.py /data/videos/samples/elevator_hall_h264_5fps.mp4 --url ws://backend:8000/ws/SAMPLE-1
+
+# 全サービスを、この名前付きのネットワークにつなぐ。コンテナ同士は、サービス名で通信する（backend:8000、redis:6379、postgres:5432）。
+# ホストへ公開するのは、gateway の ports（8000・8080・8443・8444）だけ。redis・postgres・backend は、外に出さない。
+networks:
+  hdt:
+    name: hdt-net
 
 volumes:
   pgdata:
