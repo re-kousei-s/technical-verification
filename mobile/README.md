@@ -1,0 +1,69 @@
+# 人検出クライアント（Android / Flutter）
+
+スマホのカメラ映像を、サーバー（`backend/`）へ H.264 で送る Android アプリ。Web の送信ページ（`backend/web/sender.html`）と、**同じ約束事**（WebSocket 1 本）で動く。
+**画面ロック中も、アプリの画面を閉じたあとも、送り続ける**（運用では、画面ロックして置くため）。
+
+## 仕組み
+
+```
+┌ Flutter（Dart）：画面 ──────────────┐     ┌ 前面サービス（Kotlin）：StreamService ───────────────────────┐
+│ ・登録（サーバーの URL・フロア・名前）│     │ カメラ（CameraX）→ H.264（MediaCodec）→ WebSocket（OkHttp）    │
+│ ・状態・狙いを定める画像・IN/OUT      │◀───▶│ ・サーバーの指示（状態）に従って、送る / 止める・fps・解像度     │
+│ ・開始・停止・電池の最適化の除外      │     │ ・接続は、このサービスが持つ（切れたら、2 秒ごとにつなぎ直す）  │
+└──────────────────────────────────────┘     └──────────────────────────────────────────────────────────────┘
+        MethodChannel / EventChannel                 通知が出ている間は、画面ロック中も動く（種類 camera の前面サービス）
+```
+
+- 送るかどうか・fps・解像度・カメラの設定・数える線は、**すべてサーバー（管理画面）が決める**。スマホは従うだけ。
+  - 認識中は 5fps、管理画面でリアルタイムを見られている間は 15fps（元の解像度）、一覧に出ている間は 1fps、誰も見ていなければ送らない（カメラも止める）。
+  - 見られていない間は、横幅 960px に落として送る。
+- サーバーとの約束事（`/ws/:id`）
+  - スマホ → サーバー：映像（H.264 の 1 フレームぶん、バイナリ）、カメラの能力の報告（`{"caps": …}`）
+  - サーバー → スマホ：状態（`{"recognize","send_fps","preview","idr","camera","lines"}`）
+
+### 画面ロック中も動かすための工夫
+- 前面サービス（`foregroundServiceType="camera"`）と、通知（停止ボタン付き）。
+- 部分的な wake lock（CPU が眠らない）と、Wi-Fi lock。
+- カメラ・符号化・通信を、すべて、サービスの中で行う（Flutter の画面に依存しない）。
+- 電池の最適化の除外（画面の「外す」ボタン）。機種によっては、外さないと、ロック中に止められる。
+- 注意：Android は、**アプリの画面が見えているときに開始した**前面サービスだけが、バックグラウンドでカメラを使える。アプリを開いて、サービスを開始してから、画面をロックする。
+
+## ファイル
+
+| ファイル | 役割 |
+|---|---|
+| `lib/main.dart` | 起動。登録済みなら運用の画面、未登録なら登録の画面 |
+| `lib/screens/setup_screen.dart` | 登録（サーバーの URL・フロア・名前）。登録済みの端末 ID での、つなぎ直しも |
+| `lib/screens/main_screen.dart` | 運用の画面（状態・狙いを定める画像と線・IN/OUT・電池の最適化） |
+| `lib/api.dart` | HTTP の API（登録・端末の情報・登録解除）。自己署名の証明書でも、つなげる |
+| `lib/stream_channel.dart` | サービスとの橋渡し（開始・停止・状態の受け取り） |
+| `android/.../StreamService.kt` | 前面サービス。サーバーの指示に従って、カメラ → H.264 → 送信 |
+| `android/.../ControlSocket.kt` | サーバーとの WebSocket（OkHttp）。自己署名の証明書でも、つなげる。切れたら、つなぎ直す |
+| `android/.../CameraSource.kt` | カメラ（CameraX）。画面には出さず、YUV の画像だけを受け取る |
+| `android/.../H264Encoder.kt` | MediaCodec で H.264（Annex B）にする。キーフレームには SPS/PPS を付ける |
+| `android/.../CameraCaps.kt` | カメラの一覧・ズームの範囲を、サーバーへ報告する（管理画面で選べる） |
+| `android/.../MainActivity.kt` / `EventBus.kt` / `YuvUtil.kt` | Flutter との橋渡し、サービス → 画面の知らせ、狙いを定める画像（JPEG） |
+
+## 使い方
+1. サーバーを起動する（`docker compose --profile live up -d --build`）。スマホと PC を、同じ Wi-Fi に。
+2. アプリを開き、サーバーの URL（例 `https://192.168.2.117:8000`）、フロア、名前を入れて「登録する」。
+3. カメラと通知を許可する。サービスが始まり、通知に「待機中」と出る。
+4. 「電池の最適化を外す」の案内が出たら、「外す」を押す。
+5. 三脚に置き、画面で狙いを確認する。画面をロックしてよい。
+6. 管理画面で、「認識を開始」を押す。通知が「認識中 5fps」に変わる。
+
+## ビルド
+```bash
+cd mobile
+flutter pub get
+flutter analyze
+flutter run                 # 実機を USB でつないで
+flutter build apk --release # build/app/outputs/flutter-apk/app-release.apk
+```
+必要なもの：Flutter（stable）、Android SDK（compileSdk は Flutter の既定）、JDK 17。
+
+## 状態と限界
+- Dart 側は `flutter analyze` を通している。**Kotlin（前面サービス・カメラ・符号化・WebSocket）は、この環境に Android SDK がなく、ビルドも実機での動作も、確認できていない。** 最初に実機でビルドして、確認が要る。
+- 向き：センサーの向きのまま送る（回転しない）。端末は、横向きで固定して置く前提（Web 版と同じ）。縦に置くと、映像が横倒しになる。
+- 証明書：検証用の gateway は自己署名なので、アプリは証明書の検査を省いている（`insecure`）。本番では、正式な証明書にして、検査を有効にする。
+- iPhone は、対象外。

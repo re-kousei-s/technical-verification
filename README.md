@@ -25,6 +25,7 @@
 |---|---|
 | `backend/` | **Go**。`controller`（HTTP/WebSocket の入口）→ `services`（業務ロジック）→ `repository`（DB・Redis）→ `models`。`web/`（スマホの送信ページ）、`admin/`（管理画面：React + TypeScript + Tailwind。Docker のビルドで `web/admin_dist` に入り、Go に埋め込まれる）、`gateway/`（HTTPS 用の nginx） |
 | `worker/` | **Python**。`worker.py`（起動）、`libs/`（処理の部品）、`aggregator/`（追跡・線の判定）、`common/`（検出器など）、`models/`（モデルの重み） |
+| `mobile/` | **Flutter（Android）クライアント**。画面ロック中も送る前面サービス（Kotlin）つき。詳しくは [mobile/README.md](mobile/README.md) |
 | `database/` | `schema.sql`（テーブル定義。`db-init` が起動のたびに流す。何度流しても同じ） |
 | `config/` | `cameras.yaml`（端末の既定・フロアのしきい値・ライブ表示）、`matrix.yaml`（トラッカー・検出の最低スコア） |
 | `_unused/` | 使わないもの（以前のオフライン検証、Python 版のバックエンド、ゲート（ドアの領域）の方式、テスト送信ツール、サンプル動画など） |
@@ -176,6 +177,8 @@ docker compose --profile live logs -f backend    # ログを見る（worker・ga
 4. **カメラの設定（スマホ）**：スマホが報告した内容から、カメラ（広角レンズなど）・解像度・ズームを選ぶ。選ぶと、スマホが映像を取り直す（DB の `cameras.camera_settings` に残る）。
 5. **数字**（IN/OUT・検出数・デコードの数・破棄）、**数える線**の一覧、**認識結果の画像**（2 秒ごとの静止画）、**この端末の通過**の表。
 6. 「IN/OUT 履歴を消す」：この端末の記録と累計を消す（フロアの人数の概算は変わらない）。
+
+> スマホ用の Android アプリ（Flutter）も、ある（`mobile/`）。画面ロックして運用するときは、こちらを使う。同じ約束事（`/ws/:id`）で動く。
 
 ### B. 送信ページ（スマホ）
 
