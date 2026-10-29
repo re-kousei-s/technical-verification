@@ -232,7 +232,7 @@
 <script>
 const SEND_FPS = 5;              // 端末から送る頻度
 const KEYFRAME_SECONDS = 10;     // 10秒ごと。接続直後と、フレームを捨てた直後は別に強制するので、定期的なものは長くてよい
-let curFps = SEND_FPS, encCfg = null, capCanvas = null, capCtx = null, capW = 0, capH = 0, baseBitrate = 0, liveOn = false, liveSession = false, ctlWs = null;
+let curFps = SEND_FPS, encCfg = null, capCanvas = null, capCtx = null, capW = 0, capH = 0, baseBitrate = 0;
 const BITRATE_720P = 1_000_000;   // 1280x720 のとき。解像度に比例させる（0.6〜3 Mbps）
 const MAX_BUFFERED = 1_500_000;  // 送信待ちがこれを超えたらフレームを捨てる（通信が詰まったとき）
 const $ = (id) => document.getElementById(id);
@@ -303,7 +303,7 @@ function enter(c) {
   $("camSub").textContent = c.id;
   $("setup").classList.add("hidden"); $("main").classList.remove("hidden"); document.body.classList.add("inmain");
   openCamera();
-  connectCtl(); applyPreview();
+  connectWs(); applyPreview();
   if (!polling) { polling = true; pollStats(); }
   if (!resultLoop) { resultLoop = true; pollResult(); }
 }
@@ -335,11 +335,10 @@ let testUrl = null;
 async function openTestVideo() {
   const v = $("video");
   v.srcObject = null; v.src = testUrl; v.loop = true; v.muted = true; v.playsInline = true;
-  try { await v.play(); drawOverlay(); $("testMsg").textContent = `再生中: ${v.videoWidth}×${v.videoHeight}`; }
+  try { await v.play(); $("mainMsg").textContent = ""; drawOverlay(); $("testMsg").textContent = `再生中: ${v.videoWidth}×${v.videoHeight}`; }
   catch (e) { $("mainMsg").textContent = "動画を再生できません: " + e.message; }
 }
 function setTestVideo(file) {
-  if (running) { $("testMsg").textContent = "送信中は切り替えられません。「停止」してから選んでください"; $("testFile").value = ""; return; }
   closeStream();
   if (testUrl) URL.revokeObjectURL(testUrl);
   testUrl = file ? URL.createObjectURL(file) : null;
@@ -360,8 +359,10 @@ function closeStream() { stream?.getTracks().forEach(t => t.stop()); stream = nu
 // カメラの一覧・解像度・ズームを画面に出す（カメラの名前は、許可をもらったあとでないと取れない）
 async function setupCameraControls(pf) {
   const track = stream.getVideoTracks()[0], settings = track.getSettings(), caps = track.getCapabilities?.() || {};
+  let camList = [];
   try {
     const cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput");
+    camList = cams.map((d, i) => ({ id: d.deviceId, label: d.label || `カメラ ${i + 1}` }));
     $("camSel").replaceChildren(...cams.map((d, i) => Object.assign(document.createElement("option"),
       { value: d.deviceId, textContent: d.label || `カメラ ${i + 1}`, selected: d.deviceId === settings.deviceId })));
   } catch {}
@@ -374,17 +375,38 @@ async function setupCameraControls(pf) {
     try { await track.applyConstraints({ advanced: [{ zoom: +want }] }); } catch {}
     zr.classList.remove("hidden");
   } else { zr.classList.add("hidden"); }
+  reportCaps({ devices: camList, device_id: settings.deviceId, res: pf.res || DEFAULT_RES, actual: [settings.width, settings.height],
+    resolutions: [...$("resSel").options].map(o => ({ value: o.value, label: o.textContent.split("（")[0] })),
+    zoom: caps.zoom && caps.zoom.max > caps.zoom.min ? { min: caps.zoom.min, max: caps.zoom.max, step: caps.zoom.step || 0.1, value: +$("zoom").value } : null });
   $("camInfo").textContent = `いまの映像: ${settings.width}×${settings.height}` +
     (caps.zoom ? ` ／ ズーム ${(settings.zoom ?? 1).toFixed?.(1) ?? settings.zoom}（${caps.zoom.min}〜${caps.zoom.max}）` : " ／ この端末・ブラウザはズームの変更に対応していません");
 }
 
+// カメラの能力（カメラの一覧・解像度の候補・ズームの範囲・いまの設定）を、サーバーに報告する。管理画面で、選べるようになる
+let lastCapsMsg = null;
+function reportCaps(c) { lastCapsMsg = JSON.stringify({ caps: c }); try { if (ws?.readyState === 1) ws.send(lastCapsMsg); } catch {} }
+
+// 管理画面が決めたカメラの設定（{res, zoom, device_id}）に、合わせる。変わったときだけ、映像を取り直す
+let appliedCam = "{}";
+function applyCameraSettings(c) {
+  const str = JSON.stringify(c || {});
+  if (str === appliedCam || str === "{}") return;
+  appliedCam = str;
+  const p = {};
+  if (c.res) p.res = c.res;
+  if (c.device_id) p.deviceId = c.device_id;
+  if (c.zoom != null) p.zoom = c.zoom;
+  prefs.set(p);
+  reopenCamera();
+}
+
 // カメラや解像度を変える：映像を取り直す。送信中だったら、つなぎ直して再開する
 async function reopenCamera() {
-  const was = running;
-  if (was) stop();
+  const was = running, fps = curFps;
+  if (was) stopSending();              // 解像度が変わるので、符号化をやり直す
   closeStream();
   await openCamera();
-  if (was) await start();
+  if (was) await startSending(fps);
 }
 $("widestBtn").onclick = () => { prefs.set({ res: DEFAULT_RES, zoom: null }); reopenCamera(); };
 $("camSel").onchange = () => { prefs.set({ deviceId: $("camSel").value, zoom: null }); reopenCamera(); };
@@ -540,70 +562,70 @@ function avccToAnnexB(data, ps, isKey) {
 
 function setConn(ok, text) { const p = $("connPill"); p.textContent = text; p.className = "pill " + (ok ? "ok" : "bad"); }
 
-/* ---------- 待機用の接続（送信していなくても、サーバーからの「配信を始めて／止めて」を受ける） ---------- */
-// この画面を開いている間ずっとつなぐ。管理画面で誰かがこの端末のライブ表示を開くと、送信していなくても、
-// その間だけプレビュー専用の映像（認識・カウントには使わない）を高い fps で送る。画面は点けたままにしておくこと。
-let ctlWanted = false;
-function connectCtl() {
-  if (!cam) return;
-  ctlWanted = true;
-  try { ctlWs?.close(); } catch {}
-  ctlWs = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ctl/${cam.id}`);
-  ctlWs.onmessage = (e) => {
-    try {
-      const m = JSON.parse(e.data);
-      if (m.cmd === "recognize_start") { $("mainMsg").textContent = ""; start(); }          // 管理画面が「認識を開始」した
-      else if (m.cmd === "recognize_stop") { if (running && !liveSession) stop(); }          // 管理画面が「認識を停止」した
-      else if (m.cmd === "live_start" && !running) { $("mainMsg").textContent = ""; start({ live: true, fps: m.fps || 30 }); }
-      else if (m.cmd === "live_stop" && liveSession) stop();
-    } catch {}
-  };
-  ctlWs.onclose = (e) => { if (ctlWanted && cam && e.code !== 4410 && e.code !== 4404) setTimeout(connectCtl, 2000); };
-}
-function closeCtl() { ctlWanted = false; try { ctlWs?.close(); } catch {} ctlWs = null; }
-
+/* ---------- サーバーとの接続（1 本）。映像を送るかどうかは、サーバー（管理画面）が決める ----------
+   サーバー → スマホ：{ "recognize": bool, "send_fps": N, "idr": bool }
+     N が 0 なら、映像を送らない。N が 1 以上なら、その fps で送る（認識中は 5、ライブ表示を見られている間は 15）。
+     idr が true なら、次のフレームをキーフレームにする（新しく見始めた人が、すぐ映るように）。
+   スマホ → サーバー：映像（H.264 の 1 フレームぶん、バイナリ）。この画面を開いている間は、つなぎ続ける。 */
+let wsWanted = false, recognizing = false, startingEnc = false, previewWanted = false;
+const RECOG_WIDTH = 960;   // 見られていない間（認識だけ）に送る映像の横幅。認識には、元の解像度は要らない
 function connectWs() {
-  const url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/${cam.id}` + (liveSession ? "?mode=live" : "");
-  ws = new WebSocket(url); ws.binaryType = "arraybuffer";
-  ws.onopen = () => { needKey = true; setConn(true, connText()); $("mainMsg").textContent = ""; };
-  // サーバーからの指示：ダッシュボードで誰かがこの端末のライブ表示を見ている間だけ、高い fps で送る（見終わったら元に戻る）
-  ws.onmessage = (e) => {
-    if (typeof e.data !== "string") return;
-    try {
-      const m = JSON.parse(e.data);
-      if (m.idr) needKey = true;   // ライブ表示が始まった：次のフレームを、必ず IDR（キーフレーム）にする
-      if (m.send_fps) { liveOn = !!m.live; applySendFps(m.send_fps); }
-    } catch {}
-  };
+  if (!cam) return;
+  wsWanted = true;
+  try { ws?.close(); } catch {}
+  ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/${cam.id}`); ws.binaryType = "arraybuffer";
+  ws.onopen = () => { needKey = true; setConn(true, connText()); $("mainMsg").textContent = ""; if (lastCapsMsg) ws.send(lastCapsMsg); };
+  ws.onmessage = (e) => { if (typeof e.data === "string") { try { applyState(JSON.parse(e.data)); } catch {} } };
   ws.onclose = (e) => {
-    setConn(false, running ? "再接続中…" : "停止中");
-    if (e.code === 4409) { $("mainMsg").textContent = "この端末は別の画面で送信中です"; stop(); return; }
-    if (e.code === 4404) { $("mainMsg").textContent = "サーバーに登録がありません。登録し直してください"; stop(); return; }
-    if (running) setTimeout(() => running && connectWs(), 2000);
+    setConn(false, "接続を待っています…");
+    if (e.code === 4404) { $("mainMsg").textContent = "サーバーに登録がありません。登録し直してください"; wsWanted = false; stopSending(); return; }
+    if (e.code === 4410) { $("mainMsg").textContent = "この端末は、別の画面で開かれました"; wsWanted = false; stopSending(); return; }
+    if (wsWanted && cam) setTimeout(connectWs, 2000);
   };
 }
+function closeWs() { wsWanted = false; stopSending(); try { ws?.close(); } catch {} ws = null; }
 
-async function start(opts = {}) {
-  if (running) {
-    if (liveSession && !opts.live) { stop(); await start(); }   // プレビュー専用の配信中に「送信を開始」→ 通常の送信（認識する）に切り替える
-    return;
+// サーバーの指示に合わせる（送り始める・fps を変える・止める）
+async function applyState(m) {
+  recognizing = !!m.recognize;
+  applyCameraSettings(m.camera);   // 管理画面でカメラの設定が変わったら、従う
+  if (Array.isArray(m.lines) && !drag && JSON.stringify(m.lines) !== JSON.stringify(lines)) {   // 管理画面で線が編集されたら、スマホの画面にも反映する
+    lines = m.lines; renderLineList(); drawOverlay();
   }
-  liveSession = !!opts.live;
+  if (m.idr) needKey = true;
+  const n = Math.max(0, Math.min(30, Math.round(m.send_fps || 0)));
+  const pv = !!m.preview;
+  if (pv !== previewWanted) {   // 見られ始めた／見られなくなった：解像度を変えるので、符号化をやり直す
+    previewWanted = pv;
+    if (encoder) stopSending();
+  }
+  if (n === 0) stopSending();
+  else if (!encoder) await startSending(n);
+  else applySendFps(n);
+  setConn(true, connText()); syncFsToggle();
+}
+
+async function startSending(fps) {
+  if (running || startingEnc) return;
+  startingEnc = true;
+  try { await startSendingInner(fps); } finally { startingEnc = false; }
+}
+async function startSendingInner(fps) {
   if (!stream && !testUrl) await openCamera();
-  if (!stream && !testUrl) { liveSession = false; return; }
+  if (!stream && !testUrl) return;
   const v = $("video");
   $("mainMsg").textContent = ""; $("diag").textContent = "符号化の設定を探しています…";
   if (typeof VideoEncoder === "undefined") {   // HTTP（http://IP:8000）で開くと、ブラウザが符号化の機能を隠す
     $("mainMsg").textContent = `このページでは映像を符号化できません。HTTPS で開いてください → https://${location.hostname}:8000`;
-    liveSession = false; running = false;
     return;
   }
-  const { cfg, w, h, tried } = await pickEncoderConfig(v.videoWidth & ~1, v.videoHeight & ~1);
+  let sw = v.videoWidth & ~1, sh = v.videoHeight & ~1;
+  if (!previewWanted && sw > RECOG_WIDTH) { sh = Math.round(sh * RECOG_WIDTH / sw) & ~1; sw = RECOG_WIDTH; }   // 見られていなければ、解像度を落とす
+  const { cfg, w, h, tried } = await pickEncoderConfig(sw, sh);
   if (!cfg) {
     $("mainMsg").textContent = "この端末のブラウザは、H.264 の符号化に対応していません（下の情報を開発者に伝えてください）";
     $("diag").textContent = `${navigator.userAgent}\n映像 ${v.videoWidth}x${v.videoHeight} ／ 試した組み合わせ（全て×）: ${tried.length} 通り\n` +
       tried.slice(0, 6).join("\n") + (tried.length > 6 ? "\n…" : "");
-    liveSession = false;
     return;
   }
   const useAvcc = cfg.avc.format === "avc";
@@ -624,10 +646,10 @@ async function start(opts = {}) {
       if (ws && ws.readyState === WebSocket.OPEN && ws.bufferedAmount < MAX_BUFFERED) { ws.send(buf); sent++; bytes += buf.length; }
       else { skipped++; needKey = true; }   // 欠けたら、次のフレームをキーフレームにして復帰できるようにする
     },
-    error: (e) => { $("mainMsg").textContent = "符号化エラー: " + e.message; stop(); },
+    error: (e) => { $("mainMsg").textContent = "符号化エラー: " + e.message; stopSending(); },
   });
   encoder.configure(cfg);
-  baseBitrate = cfg.bitrate; curFps = liveSession ? (opts.fps || 30) : SEND_FPS; liveOn = false; capW = w; capH = h;
+  baseBitrate = cfg.bitrate; curFps = fps; capW = w; capH = h;
   encCfg = cfg;
   if (curFps !== SEND_FPS) {      // 最初から高い fps で始める（ライブ表示のための配信）
     encCfg = { ...cfg, framerate: curFps, bitrate: Math.round(Math.min(4_000_000, baseBitrate * (1 + (curFps - SEND_FPS) / 12.5))) };
@@ -635,7 +657,6 @@ async function start(opts = {}) {
   }
   capCanvas = new OffscreenCanvas(w, h); capCtx = capCanvas.getContext("2d");
   timer = setInterval(captureTick, 1000 / curFps);
-  connectWs();
   try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {}
 }
 
@@ -644,13 +665,13 @@ function captureTick() {
   if (!encoder || encoder.encodeQueueSize > 3) { skipped++; return; }
   capCtx.drawImage($("video"), 0, 0, capW, capH);
   const frame = new VideoFrame(capCanvas, { timestamp: Math.round(performance.now() * 1000) });
-  const key = needKey || frameNo % Math.round(KEYFRAME_SECONDS * curFps) === 0;
+  const key = needKey || curFps <= 2 || frameNo % Math.round(KEYFRAME_SECONDS * curFps) === 0;   // 低い fps（一覧の小さな表示）は、毎フレームをキーフレームにする（見始めても、すぐ映る）
   encoder.encode(frame, { keyFrame: key }); frame.close();
   if (key) needKey = false;
   frameNo++;
 }
 
-const connText = () => liveSession ? `ライブ配信中 ${curFps}fps（プレビューのみ）` : `送信中 ${curFps}fps` + (liveOn ? "（ライブ）" : "");
+const connText = () => running ? `${recognizing ? "認識中" : "ライブ配信中"} ${curFps}fps` : "待機中";
 
 // 送る fps を変える（ライブ表示の開始・終了）。タイマーとエンコーダの設定を合わせ直し、次のフレームをキーフレームにする
 function applySendFps(n) {
@@ -666,12 +687,12 @@ function applySendFps(n) {
   setConn(true, connText());
 }
 
-function stop() {
-  running = false; clearInterval(timer); timer = null; curFps = SEND_FPS; liveOn = false; liveSession = false;
+// 映像を送るのを止める（サーバーとの接続は、つないだまま）
+function stopSending() {
+  running = false; clearInterval(timer); timer = null; curFps = SEND_FPS;
   try { encoder?.close(); } catch {} encoder = null;
-  try { ws?.close(); } catch {} ws = null;
   try { wakeLock?.release(); } catch {} wakeLock = null;
-  setConn(false, "待機中"); syncFsToggle();
+  setConn(!!ws && ws.readyState === 1, connText()); syncFsToggle();
 }
 document.addEventListener("visibilitychange", async () => {   // 画面を戻したら、スリープで外れた wake lock を取り直す
   if (running && document.visibilityState === "visible") { try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {} }
@@ -694,9 +715,9 @@ $("resetAllBtn").onclick = async () => {
 
 $("unregisterBtn").onclick = async () => {
   if (!confirm("この端末の登録を解除します。これまでの通過の記録は残ります。")) return;
-  stop();
+  closeWs();
   try { await api(`/api/cameras/${cam.id}`, { method: "DELETE" }); } catch (e) { $("mainMsg").textContent = e.message; return; }
-  store.clear(); closeCtl(); cam = null;
+  store.clear(); cam = null;
   closeStream();
   $("main").classList.add("hidden"); $("setup").classList.remove("hidden"); document.body.classList.remove("inmain"); loadFloors();
 };
@@ -771,8 +792,8 @@ $("fsBtn").onclick = () => (document.fullscreenElement ? document.exitFullscreen
 function syncFsToggle() {
   $("guide").classList.toggle("hidden", running);
   const r = $("runState");
-  r.classList.toggle("on", running && !liveSession);
-  r.textContent = running ? (liveSession ? "ライブ配信中" : "認識中") : "待機中";
+  r.classList.toggle("on", running && recognizing);
+  r.textContent = running ? (recognizing ? "認識中" : "ライブ配信中") : (recognizing ? "認識の開始待ち" : "待機中");
 }
 
 /* ---------- 認識結果の表示（サーバーから 0.5 秒ごとに取る） ---------- */
