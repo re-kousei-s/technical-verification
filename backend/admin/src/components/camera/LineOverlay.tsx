@@ -46,6 +46,7 @@ export function LineOverlay({ lines, width, height, boxes, edit }: Props) {
 
   const onDown = (e: React.PointerEvent) => {
     if (!edit) return;
+    e.preventDefault(); // ドラッグ中に、文字が選択されないようにする
     const p = toFrac(e), hit = hitTest(p);
     if (!hit) return;
     edit.onSelect(hit.i);
@@ -70,7 +71,7 @@ export function LineOverlay({ lines, width, height, boxes, edit }: Props) {
     <svg
       ref={svg} width={width} height={height}
       className={`absolute inset-0 ${edit ? "cursor-crosshair" : "pointer-events-none"}`}
-      style={{ touchAction: "none" }}
+      style={{ touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
       onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}
     >
       {boxes?.map(([x1, y1, x2, y2, id], i) => (

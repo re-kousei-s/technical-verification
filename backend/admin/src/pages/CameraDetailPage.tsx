@@ -1,6 +1,7 @@
 import { Link, useParams } from "react-router-dom";
 import { CameraLines } from "../components/camera/CameraLines";
 import { CameraLiveView } from "../components/camera/CameraLiveView";
+import { CameraSettingsPanel } from "../components/camera/CameraSettingsPanel";
 import { CameraSnapshot } from "../components/camera/CameraSnapshot";
 import { RecognizeButton } from "../components/camera/RecognizeButton";
 import { CameraResetButton } from "../components/camera/CameraResetButton";
@@ -29,6 +30,7 @@ export default function CameraDetailPage() {
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
         <Card title="ライブ" className="min-w-0"><CameraLiveView cameraId={cam.id} /></Card>
         <div className="space-y-4">
+          <Card title="カメラの設定（スマホ）"><CameraSettingsPanel cameraId={cam.id} /></Card>
           <Card title="数字"><CameraStats cameraId={cam.id} /></Card>
           <Card title="数える線"><CameraLines cameraId={cam.id} /></Card>
           <Card title="認識結果の画像（2 秒ごと）"><CameraSnapshot cameraId={cam.id} /></Card>

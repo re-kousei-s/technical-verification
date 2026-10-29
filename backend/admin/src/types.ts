@@ -22,7 +22,7 @@ export interface Line { id: string; name: string; line: [number, number][] }
 
 export interface Camera {
   id: string; floor: number; name: string | null; sample_fps: number; tracker: string;
-  anchor: string; lines: string[]; recognizing: boolean; ctl_online: boolean; source: "db" | "yaml"; connected: boolean;
+  anchor: string; lines: string[]; recognizing: boolean; phone_online: boolean; source: "db" | "yaml"; connected: boolean;
   last_seen_age_ms: number | null; decoded: number; enqueued: number; dropped: number; decode_errors: number;
   in: number; out: number; last_dets: number | null; last_tracks: number | null; last_frame_ts: string | null;
   size: [number | null, number | null]; has_image: boolean;
@@ -52,9 +52,17 @@ export interface Overview {
 
 /** /api/live/:id/info */
 export interface LiveInfo {
-  streaming: boolean; mode: "send" | "live" | null; ctl_online: boolean; rx_fps: number | null;
+  streaming: boolean; recognizing: boolean; phone_online: boolean; rx_fps: number | null;
   live_on: boolean; requested_fps: number; max_seconds: number;
   lines: Line[]; in: number; out: number; line_counts: Record<string, { in: number; out: number }>;
+  caps: CameraCaps | null;
+}
+
+/** スマホが報告する、カメラの能力と、いまの設定 */
+export interface CameraCaps {
+  devices: { id: string; label: string }[]; device_id?: string; res: string; actual?: [number, number];
+  resolutions: { value: string; label: string }[];
+  zoom: { min: number; max: number; step: number; value: number } | null;
 }
 
 /** /api/camera/:id/result（[x1,y1,x2,y2,追跡ID]、座標は割合） */

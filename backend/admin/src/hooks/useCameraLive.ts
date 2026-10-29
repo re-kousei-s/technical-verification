@@ -11,6 +11,8 @@ export interface LiveState {
   size: { w: number; h: number } | null;
   /** 画面に出せている fps */
   shownFps: number | null;
+  /** 認識結果（検出枠など）。映像と同じ接続で、変わったときに届く */
+  result: DetectResult | null;
 }
 
 /**
@@ -18,11 +20,16 @@ export interface LiveState {
  *   バックエンドが中継する H.264（Annex B）を WebSocket で受け取り、このブラウザの VideoDecoder（WebCodecs）でデコードする。
  *   サーバーはデコードしない。この部品が表示されている間だけ、端末は高い fps で送る（外すと元に戻る）。
  */
-export function useCameraLive(cameraId: string, canvasRef: RefObject<HTMLCanvasElement>, enabled: boolean): LiveState {
+/** off＝つながない / thumb＝一覧の小さな表示（低い fps） / live＝リアルタイム表示（高い fps を頼む） */
+export type LiveMode = "off" | "thumb" | "live";
+
+export function useCameraLive(cameraId: string, canvasRef: RefObject<HTMLCanvasElement>, mode: LiveMode): LiveState {
+  const enabled = mode !== "off";
   const [info, setInfo] = useState<LiveInfo | null>(null);
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   const [shownFps, setShownFps] = useState<number | null>(null);
   const [unsupported, setUnsupported] = useState(false);
+  const [result, setResult] = useState<DetectResult | null>(null);
 
   // 映像の受信とデコード
   useEffect(() => {
@@ -69,9 +76,12 @@ export function useCameraLive(cameraId: string, canvasRef: RefObject<HTMLCanvasE
       }
     };
 
-    const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/live/${encodeURIComponent(cameraId)}`);
+    const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/live/${encodeURIComponent(cameraId)}${mode === "thumb" ? "?thumb=1" : ""}`);
     ws.binaryType = "arraybuffer";
-    ws.onmessage = (e) => feed(new Uint8Array(e.data));
+    ws.onmessage = (e) => {
+      if (typeof e.data === "string") { try { setResult(JSON.parse(e.data)); } catch { /* 読めない結果は、使わない */ } return; }
+      feed(new Uint8Array(e.data));
+    };
 
     const fpsTimer = window.setInterval(() => {
       const now = performance.now();
@@ -87,8 +97,9 @@ export function useCameraLive(cameraId: string, canvasRef: RefObject<HTMLCanvasE
       const cv = canvasRef.current;
       cv?.getContext("2d")?.clearRect(0, 0, cv.width, cv.height);
       setSize(null);
+      setResult(null);
     };
-  }, [cameraId, canvasRef, enabled]);
+  }, [cameraId, canvasRef, enabled, mode]);
 
   // 端末の状態・線・IN/OUT（1 秒ごと）
   useEffect(() => {
@@ -100,25 +111,11 @@ export function useCameraLive(cameraId: string, canvasRef: RefObject<HTMLCanvasE
   }, [cameraId]);
 
   let status: LiveState["status"];
-  if (!enabled) status = { text: "ライブは停止中です（見るときは「ライブを開始」）", tone: "wait" };
+  if (!enabled) status = { text: "停止中", tone: "wait" };
   else if (unsupported) status = { text: "この画面ではデコードできません（HTTPS か localhost で開いてください）", tone: "bad" };
-  else if (info?.streaming) status = { text: info.mode === "live" ? "ライブ中（プレビューのみ・認識なし）" : "ライブ中（送信中の端末）", tone: "ok" };
-  else if (info?.ctl_online) status = { text: "端末に配信を頼んでいます…", tone: "wait" };
+  else if (info?.streaming) status = { text: (mode === "live" ? "リアルタイム" : "低 fps") + (info.recognizing ? "（認識中）" : "（認識していない）"), tone: "ok" };
+  else if (info?.phone_online) status = { text: "端末に配信を頼んでいます…", tone: "wait" };
   else status = { text: "スマホで送信ページを開いておいてください（画面は点けたまま）", tone: "bad" };
 
-  return { status, info, size, shownFps };
-}
-
-/** 検出枠（認識の頻度でしか更新されない）。enabled が false の間は取りに行かない */
-export function useDetectBoxes(cameraId: string, enabled: boolean): DetectResult | null {
-  const [r, setR] = useState<DetectResult | null>(null);
-  useEffect(() => {
-    if (!enabled) { setR(null); return; }
-    let alive = true;
-    const tick = () => api.result(cameraId).then((x) => alive && setR(x)).catch(() => {});
-    tick();
-    const t = window.setInterval(tick, 250);
-    return () => { alive = false; window.clearInterval(t); };
-  }, [cameraId, enabled]);
-  return r;
+  return { status, info, size, shownFps, result };
 }

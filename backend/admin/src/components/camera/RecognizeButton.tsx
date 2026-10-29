@@ -21,12 +21,12 @@ export function RecognizeButton({ cameraId }: { cameraId: string }) {
   const sending = cam.connected; // 認識用の映像が、実際に届いているか
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <Chip tone={cam.ctl_online ? "ok" : "off"} dot>{cam.ctl_online ? "スマホ接続中" : "スマホ未接続"}</Chip>
+      <Chip tone={cam.phone_online ? "ok" : "off"} dot>{cam.phone_online ? "スマホ接続中" : "スマホ未接続"}</Chip>
       <Chip tone={cam.recognizing ? (sending ? "ok" : "warn") : "off"} dot>
         {cam.recognizing ? (sending ? "認識中" : "認識を開始しています…") : "停止中"}
       </Chip>
       <Button variant={cam.recognizing ? "danger" : "filled"} onClick={toggle} disabled={busy || cam.source !== "db"}
-        title={cam.source !== "db" ? "yaml で固定した端末には、スマホがありません" : !cam.ctl_online ? "スマホで送信ページを開くと、開始されます" : ""}>
+        title={cam.source !== "db" ? "yaml で固定した端末には、スマホがありません" : !cam.phone_online ? "スマホで送信ページを開くと、開始されます" : ""}>
         {cam.recognizing ? "認識を停止" : "認識を開始"}
       </Button>
     </div>

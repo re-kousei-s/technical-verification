@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useCameraLive, useDetectBoxes } from "../../hooks/useCameraLive";
+import { useCameraLive } from "../../hooks/useCameraLive";
 import { useLineEditor } from "../../hooks/useLineEditor";
 import { useCamera } from "../../hooks/useOverview";
 import { Button } from "../ui/Button";
@@ -9,19 +9,19 @@ import { LineOverlay } from "./LineOverlay";
 /**
  * 端末 ID を渡すだけで、ライブ映像・線・IN/OUT・検出枠・線の編集がそろった部品。
  *   <CameraLiveView cameraId="F2-789E" />
- * 「ライブを開始」を押している間だけ、その端末は高い fps で送る（ページを開いただけでは、送らない）。
+ * 開いている間は、低い fps（thumb_fps）で映る。「リアルタイム」を押している間だけ、高い fps（live_fps）で送ってもらう。
  */
 export function CameraLiveView({ cameraId }: { cameraId: string }) {
   const cam = useCamera(cameraId);
   const canvas = useRef<HTMLCanvasElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
-  const [on, setOn] = useState(false); // ライブを見ているか。押すまでは、つながない（端末に高い fps を頼まない）
+  const [realtime, setRealtime] = useState(false); // リアルタイム（高い fps）を見ているか。見ていない間は、低い fps の表示
   const [showBoxes, setShowBoxes] = useState(true);
   const [box, setBox] = useState({ w: 0, h: 0 });
 
-  const live = useCameraLive(cameraId, canvas, on);
+  const live = useCameraLive(cameraId, canvas, realtime ? "live" : "thumb");
   const editor = useLineEditor(cameraId);
-  const result = useDetectBoxes(cameraId, showBoxes && !editor.draft);
+  const result = live.result; // 認識結果は、映像と同じ接続で届く（別に取りに行かない）
 
   // 映像の表示サイズ（線の座標を px にするため）
   useEffect(() => {
@@ -36,15 +36,15 @@ export function CameraLiveView({ cameraId }: { cameraId: string }) {
   const lines = editor.draft ?? live.info?.lines ?? [];
   const editable = cam?.source === "db";
   const tone = live.status.tone === "ok" ? "ok" : live.status.tone === "wait" ? "warn" : "bad";
-  const stopLive = () => { editor.cancel(); setOn(false); };
+  const toggleRealtime = () => setRealtime(!realtime);
   const fullscreen = () => (document.fullscreenElement ? document.exitFullscreen() : wrap.current?.parentElement?.requestFullscreen());
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className={`flex flex-col gap-3 ${editor.draft ? "select-none" : ""}`}>   {/* 編集中は、文字が選択されないようにする */}
       {/* 上の操作列 */}
       <div className="flex flex-wrap items-center gap-2">
         <Chip tone={tone} dot>{live.status.text}</Chip>
-        {on && live.info && (
+        {live.info && (
           <span className="text-xs text-sub">
             要求 {live.info.requested_fps}fps ／ 受信 {live.info.rx_fps != null ? live.info.rx_fps.toFixed(1) : "–"}fps ／ 表示 {live.shownFps != null ? live.shownFps.toFixed(1) : "–"}fps
           </span>
@@ -55,11 +55,11 @@ export function CameraLiveView({ cameraId }: { cameraId: string }) {
             <label className="flex items-center gap-1.5 text-xs text-sub">
               <input type="checkbox" checked={showBoxes} onChange={(e) => setShowBoxes(e.target.checked)} /> 認識結果（枠）を重ねる
             </label>
-            {on
-              ? <Button variant="outlined" onClick={stopLive}>ライブを停止</Button>
-              : <Button variant="filled" onClick={() => setOn(true)}>ライブを開始</Button>}
+            <Button variant={realtime ? "outlined" : "filled"} onClick={toggleRealtime}>
+              {realtime ? "リアルタイムを停止" : `リアルタイム（${live.info?.requested_fps ?? 15}fps）`}
+            </Button>
             <Button variant="outlined" onClick={() => live.info && editor.start(live.info.lines)}
-              disabled={!on || !live.info || !editable} title={!editable ? "yaml で固定した端末の線は、変えられません" : on ? "" : "ライブを開始すると、線を編集できます"}>
+              disabled={!live.size || !live.info || !editable} title={!editable ? "yaml で固定した端末の線は、変えられません" : !live.size ? "映像が届いてから、編集できます" : ""}>
               線を編集
             </Button>
             <Button variant="outlined" onClick={fullscreen}>全画面</Button>
@@ -73,13 +73,14 @@ export function CameraLiveView({ cameraId }: { cameraId: string }) {
           <b className="text-primary">線の編集</b>
           <Button onClick={editor.add}>＋ 線を足す</Button>
           <Button onClick={editor.remove} disabled={editor.draft.length < 2}>選んだ線を消す</Button>
+          <Button onClick={editor.flip} title="IN と OUT の向きを入れ替える">IN/OUT を反転</Button>
           <input
             className="h-9 w-44 rounded-full border border-line bg-surface px-3 text-sm"
             value={editor.draft[editor.selected]?.name ?? ""} onChange={(e) => editor.rename(e.target.value)}
             placeholder="線の名前" aria-label="選んだ線の名前" maxLength={24}
           />
           <span className={`text-xs ${editor.message?.bad ? "text-bad" : "text-sub"}`}>
-            {editor.message?.text ?? "端の○をドラッグで形を、線の上をドラッグで位置を動かします。入口の下に置いてください"}
+            {editor.message?.text ?? "端の○をドラッグで形を、線の上をドラッグで位置を動かします。緑の矢印が IN の向きです（「IN/OUT を反転」で入れ替え）"}
           </span>
           <span className="flex-1" />
           <Button variant="filled" onClick={editor.save} disabled={editor.saving}>{editor.saving ? "保存中…" : "保存"}</Button>
@@ -93,15 +94,10 @@ export function CameraLiveView({ cameraId }: { cameraId: string }) {
           <canvas ref={canvas} className="absolute inset-0 h-full w-full" />
           {!live.size && (
             <div className="absolute inset-0 grid place-items-center px-6 text-center text-sm text-white/70">
-              {on ? live.status.text : (
-                <div className="flex flex-col items-center gap-3">
-                  <span>ライブは停止中です。開始すると、端末は高い fps（{live.info?.requested_fps ?? 15}fps）で送ります</span>
-                  <Button variant="filled" onClick={() => setOn(true)}>ライブを開始</Button>
-                </div>
-              )}
+              {live.status.text}
             </div>
           )}
-          {on && box.w > 0 && (
+          {box.w > 0 && (
             <LineOverlay
               lines={lines} width={box.w} height={box.h}
               boxes={showBoxes && !result?.stale ? result?.boxes : undefined}
@@ -109,7 +105,7 @@ export function CameraLiveView({ cameraId }: { cameraId: string }) {
             />
           )}
           {/* 左上：累計と、線ごとの IN/OUT（編集中は、線が見えにくくなるので出さない） */}
-          {on && live.info && !editor.draft && (
+          {live.info && !editor.draft && (
             <div className="pointer-events-none absolute left-2 top-2 rounded-md bg-black/55 px-2.5 py-1.5 text-xs font-bold text-white">
               <div className="text-sm">IN {live.info.in}　OUT {live.info.out}</div>
               {lines.length >= 2 && lines.map((l) => {

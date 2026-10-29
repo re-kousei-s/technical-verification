@@ -39,6 +39,11 @@ export function useLineEditor(cameraId: string, onSaved?: () => void) {
     setSelected(Math.max(0, Math.min(selected, draft.length - 2)));
   }, [draft, selected]);
 
+  // 始点と終点を入れ替える。IN の向き（始点→終点に対して左側）が、反対になる
+  const flip = useCallback(() => {
+    setDraft((d) => d && d.map((l, k) => (k === selected ? { ...l, line: [l.line[1], l.line[0]] } : l)));
+  }, [selected]);
+
   const rename = useCallback((name: string) => {
     setDraft((d) => d && d.map((l, k) => (k === selected ? { ...l, name } : l)));
   }, [selected]);
@@ -58,5 +63,5 @@ export function useLineEditor(cameraId: string, onSaved?: () => void) {
     }
   }, [cameraId, draft, onSaved]);
 
-  return { draft, selected, setSelected, message, saving, start, cancel, setLine, add, remove, rename, save };
+  return { draft, selected, setSelected, message, saving, start, cancel, setLine, add, remove, flip, rename, save };
 }

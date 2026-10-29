@@ -25,6 +25,9 @@ export const api = {
   saveLines: (id: string, lines: Line[]) => request(`/api/camera/${encodeURIComponent(id)}/lines`, json("PUT", lines)),
   setFloorCount: (floor: number, count: number) => request(`/api/floors/${floor}/count`, json("POST", { count })),
   setRecognize: (id: string, on: boolean) => request(`/api/camera/${encodeURIComponent(id)}/recognize`, json("POST", { on })),
+  setCameraSettings: (id: string, body: { res?: string; zoom?: number; device_id?: string }) =>
+    request(`/api/camera/${encodeURIComponent(id)}/camera-settings`, json("PUT", body)),
+  recognizeAll: (on: boolean) => request<{ cameras: number }>("/api/recognize/all", json("POST", { on })),
   resetHistory: (scope: { camera_id?: string; floor?: number }) => request("/api/history/reset", json("POST", scope)),
   resetFloors: () => request("/api/floors/reset", json("POST", {})),
   resetAll: () => request("/api/reset-all", json("POST", {})),
