@@ -1,8 +1,8 @@
 package controller
 
 import (
+	"encoding/json"
 	"net/http"
-	"strconv"
 
 	"github.com/labstack/echo/v4"
 
@@ -43,8 +43,7 @@ func (d *DeviceController) Register(e *echo.Echo) {
 	e.POST("/api/cameras/:id/reset", d.resetCamera)
 	e.POST("/api/reset-all", d.resetAll)
 
-	e.GET("/ws/:id", d.streamWS)   // 映像（H.264）
-	e.GET("/ctl/:id", d.controlWS) // 待機用
+	e.GET("/ws/:id", d.deviceWS) // スマホとの接続（映像と、状態の指示）
 }
 
 // senderPage は、スマホ用の送信ページ。
@@ -144,6 +143,11 @@ func (d *DeviceController) patchCamera(c echo.Context) error {
 	if err != nil {
 		return fail(c, err)
 	}
+	if patch.Lines != nil {
+		if b, err := json.Marshal(cam.Lines); err == nil {
+			d.streams.SetLines(c.Param("id"), b) // ハブの線も合わせる（古い線が、スマホに戻らないように）
+		}
+	}
 	return c.JSON(200, cam)
 }
 
@@ -186,36 +190,16 @@ func (d *DeviceController) resetAll(c echo.Context) error {
 // WebSocket
 // ---------------------------------------------------------------------------
 
-// streamWS は、映像の受信。 /ws/:id?mode=send|live&ts_header=0|1
+// deviceWS は、スマホとの接続（1 台 1 本）。 /ws/:id
 //
-//	バイナリメッセージ = H.264（Annex B）の 1 フレームぶん。
-func (d *DeviceController) streamWS(c echo.Context) error {
+//	スマホ → サーバー：映像（バイナリ。H.264 の 1 フレームぶん）
+//	サーバー → スマホ：状態（JSON）{"recognize":bool,"send_fps":N,"idr":bool}。N が 0 なら、映像を送らない
+func (d *DeviceController) deviceWS(c echo.Context) error {
 	conn := upgrade(c)
 	if conn == nil {
 		return nil
 	}
-	mode := services.ModeSend
-	if c.QueryParam("mode") == services.ModeLive {
-		mode = services.ModeLive
-	}
-	tsHeader, _ := strconv.Atoi(c.QueryParam("ts_header"))
-
-	if err := d.streams.RunStream(c.Param("id"), mode, tsHeader == 1, conn); err != nil {
-		code, reason := closeCodeFor(err)
-		conn.closeWith(code, reason)
-		return nil
-	}
-	_ = conn.Conn.Close()
-	return nil
-}
-
-// controlWS は、スマホの送信ページの待機用の接続。映像は流れず、サーバーからの指示が流れる。
-func (d *DeviceController) controlWS(c echo.Context) error {
-	conn := upgrade(c)
-	if conn == nil {
-		return nil
-	}
-	if err := d.streams.RunControl(c.Param("id"), conn); err != nil {
+	if err := d.streams.RunDevice(c.Param("id"), conn); err != nil {
 		code, reason := closeCodeFor(err)
 		conn.closeWith(code, reason)
 		return nil

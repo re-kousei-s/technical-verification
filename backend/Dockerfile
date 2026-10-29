@@ -19,5 +19,5 @@ RUN CGO_ENABLED=0 go build -o /out/backend .
 FROM alpine:3.23
 RUN apk add --no-cache ffmpeg ca-certificates tzdata
 COPY --from=build /out/backend /usr/local/bin/backend
-EXPOSE 8000 8080
+# ポートは、EXPOSE しない（外へ出すのは、gateway の ports だけ。コンテナ同士は、ネットワーク hdt-net の中で、backend:8000 などの名前で通信する）
 CMD ["backend"]

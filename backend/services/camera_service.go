@@ -59,7 +59,10 @@ func (s *CameraService) All() ([]models.CameraConfig, error) {
 		c := models.CameraConfig{
 			ID: r.CameraID, Floor: r.Floor, Name: r.Name, Lines: []models.Line{},
 			SampleFPS: y.Defaults.SampleFPS, Tracker: y.Defaults.Tracker, Anchor: y.Defaults.Anchor,
-			Tiling: y.Defaults.Tiling, Source: "db", Recognizing: r.Recognizing,
+			Tiling: y.Defaults.Tiling, Source: "db", Recognizing: r.Recognizing, CameraSettings: json.RawMessage(`{}`),
+		}
+		if len(r.CameraSettings) > 2 {
+			c.CameraSettings = json.RawMessage(r.CameraSettings)
 		}
 		_ = json.Unmarshal(r.Lines, &c.Lines)
 		if c.Lines == nil {
@@ -219,6 +222,43 @@ func (s *CameraService) SetRecognizing(id string, on bool) error {
 		return errConflict("yaml で固定したカメラには、スマホがない")
 	}
 	return s.repo.UpdateCamera(id, map[string]any{"recognizing": on})
+}
+
+// SetCameraSettings は、スマホのカメラの設定を保存する（管理画面の指示。スマホが従う）。
+// 受け付ける項目：res（"1280x960" の形）、zoom（数）、device_id（カメラの ID）。他の項目は捨てる。
+func (s *CameraService) SetCameraSettings(id string, in map[string]any) (json.RawMessage, error) {
+	cam, err := s.mustGet(id)
+	if err != nil {
+		return nil, err
+	}
+	if cam.Source != "db" {
+		return nil, errConflict("yaml で固定したカメラには、スマホがない")
+	}
+	out := map[string]any{}
+	if v, ok := in["res"].(string); ok && v != "" {
+		var w, h int
+		if n, _ := fmt.Sscanf(v, "%dx%d", &w, &h); n != 2 || w < 160 || h < 120 || w > 4096 || h > 4096 {
+			return nil, errInvalid("解像度は 1280x960 の形で、160x120〜4096x4096")
+		}
+		out["res"] = v
+	}
+	if v, ok := in["zoom"].(float64); ok {
+		if v < 0.1 || v > 20 {
+			return nil, errInvalid("ズームは 0.1〜20")
+		}
+		out["zoom"] = v
+	}
+	if v, ok := in["device_id"].(string); ok && v != "" {
+		if len(v) > 200 {
+			return nil, errInvalid("カメラの ID が長すぎる")
+		}
+		out["device_id"] = v
+	}
+	b, _ := json.Marshal(out)
+	if err := s.repo.UpdateCamera(id, map[string]any{"camera_settings": models.JSON(b)}); err != nil {
+		return nil, err
+	}
+	return b, nil
 }
 
 // Delete は、登録を解除する（送信中は不可）。通過の記録は残る。

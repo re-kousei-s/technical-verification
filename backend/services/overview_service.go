@@ -44,10 +44,10 @@ type CameraView struct {
 	SampleFPS     float64    `json:"sample_fps"`
 	Tracker       string     `json:"tracker"`
 	Anchor        string     `json:"anchor"`
-	Lines         []string   `json:"lines"`       // 線の名前だけ
-	Recognizing   bool       `json:"recognizing"` // 管理画面が「認識中」にしているか
-	CtlOnline     bool       `json:"ctl_online"`  // スマホの送信ページが開いていて、指示を受けられるか
-	Source        string     `json:"source"`      // "db"（スマホから登録・編集できる）／ "yaml"（固定。編集不可）
+	Lines         []string   `json:"lines"`        // 線の名前だけ
+	Recognizing   bool       `json:"recognizing"`  // 管理画面が「認識中」にしているか
+	PhoneOnline   bool       `json:"phone_online"` // スマホの送信ページが開いていて、指示を受けられるか
+	Source        string     `json:"source"`       // "db"（スマホから登録・編集できる）／ "yaml"（固定。編集不可）
 	Connected     bool       `json:"connected"`
 	LastSeenAgeMs *int64     `json:"last_seen_age_ms"`
 	Decoded       int64      `json:"decoded"`
@@ -165,7 +165,7 @@ func (s *OverviewService) Build(ctx context.Context) (*Overview, error) {
 		}
 		v := CameraView{
 			ID: c.ID, Floor: c.Floor, Name: c.Name, SampleFPS: c.SampleFPS, Tracker: c.Tracker, Anchor: c.Anchor,
-			Lines: names, Source: c.Source, Recognizing: c.Recognizing, CtlOnline: s.streams.CtlOnline(c.ID), Connected: rt.Active && rt.Mode == ModeSend,
+			Lines: names, Source: c.Source, Recognizing: c.Recognizing, PhoneOnline: s.streams.PhoneOnline(c.ID), Connected: s.streams.Sending(c.ID),
 			Decoded: rt.Decoded, Enqueued: rt.Enqueued, Dropped: rt.Dropped, DecodeErrors: rt.DecodeErrors,
 			In: st.InCount, Out: st.OutCount, LastDets: st.LastDets, LastTracks: st.LastTracks,
 			LastFrameTs: st.LastFrameTs, Size: [2]*int{st.FrameW, st.FrameH},

@@ -6,6 +6,7 @@ package models
 
 import (
 	"database/sql/driver"
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -52,17 +53,18 @@ func (j JSON) MarshalJSON() ([]byte, error) {
 // Camera は、スマホなどの端末（= カメラ）の登録。cameras テーブル。
 // NULL の項目は、cameras.yaml の defaults を使う。
 type Camera struct {
-	CameraID     string    `gorm:"column:camera_id;primaryKey"`
-	Floor        int       `gorm:"column:floor"`
-	Name         *string   `gorm:"column:name"`
-	Lines        JSON      `gorm:"column:lines"` // カウントライン [{id,name,line:[[x1,y1],[x2,y2]]}, ...]  座標は画面に対する割合
-	SampleFPS    *float64  `gorm:"column:sample_fps"`
-	Anchor       *string   `gorm:"column:anchor"`
-	Tracker      *string   `gorm:"column:tracker"`
-	Tiling       *string   `gorm:"column:tiling"`
-	Recognizing  bool      `gorm:"column:recognizing"` // 管理画面が「認識中」にしているか
-	RegisteredAt time.Time `gorm:"column:registered_at"`
-	UpdatedAt    time.Time `gorm:"column:updated_at"`
+	CameraID       string    `gorm:"column:camera_id;primaryKey"`
+	Floor          int       `gorm:"column:floor"`
+	Name           *string   `gorm:"column:name"`
+	Lines          JSON      `gorm:"column:lines"` // カウントライン [{id,name,line:[[x1,y1],[x2,y2]]}, ...]  座標は画面に対する割合
+	SampleFPS      *float64  `gorm:"column:sample_fps"`
+	Anchor         *string   `gorm:"column:anchor"`
+	Tracker        *string   `gorm:"column:tracker"`
+	Tiling         *string   `gorm:"column:tiling"`
+	Recognizing    bool      `gorm:"column:recognizing"`     // 管理画面が「認識中」にしているか
+	CameraSettings JSON      `gorm:"column:camera_settings"` // スマホのカメラの設定（解像度・ズーム・カメラ）
+	RegisteredAt   time.Time `gorm:"column:registered_at"`
+	UpdatedAt      time.Time `gorm:"column:updated_at"`
 }
 
 func (Camera) TableName() string { return "cameras" }
@@ -131,4 +133,6 @@ type CameraConfig struct {
 	Source    string  `json:"source"` // "db"（送信ページから登録）/ "yaml"（固定）
 	// 認識中か。スマホは、これが true の間だけ映像を送る（管理画面が決める）
 	Recognizing bool `json:"recognizing"`
+	// スマホのカメラの設定 {"res","zoom","device_id"}。管理画面が決め、スマホが従う
+	CameraSettings json.RawMessage `json:"camera_settings"`
 }

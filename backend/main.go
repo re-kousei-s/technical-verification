@@ -38,8 +38,7 @@ func main() {
 	queueRepo := repository.NewQueueRepository(rdb, env.Partitions)
 
 	cameras := services.NewCameraService(dbRepo, env.CamerasPath)
-	hub := services.NewLiveHub()
-	streams := services.NewStreamService(env, cameras, queueRepo, hub)
+	streams := services.NewStreamService(env, cameras, queueRepo)
 	floors := services.NewFloorService(dbRepo, cameras)
 	overview := services.NewOverviewService(dbRepo, queueRepo, cameras, streams)
 

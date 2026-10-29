@@ -65,7 +65,8 @@ type Yaml struct {
 	} `yaml:"defaults"`
 	Live struct {
 		NormalFPS float64 `yaml:"normal_fps"` // ふだん端末が送る fps
-		LiveFPS   float64 `yaml:"live_fps"`   // ライブ表示中に端末へ頼む fps
+		LiveFPS   float64 `yaml:"live_fps"`   // リアルタイム表示中に端末へ頼む fps
+		ThumbFPS  float64 `yaml:"thumb_fps"`  // 一覧の小さな表示（監視カメラの画面）に出ている間、端末へ頼む fps
 		MaxSecond int     `yaml:"max_seconds"`
 	} `yaml:"live"`
 	Estimate struct {
@@ -120,6 +121,9 @@ func LoadYaml(path string) (*Yaml, error) {
 	}
 	if y.Live.NormalFPS == 0 {
 		y.Live.NormalFPS = 5
+	}
+	if y.Live.ThumbFPS == 0 {
+		y.Live.ThumbFPS = 1
 	}
 	if y.Live.LiveFPS == 0 {
 		y.Live.LiveFPS = 15

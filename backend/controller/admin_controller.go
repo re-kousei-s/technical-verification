@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
@@ -56,8 +58,10 @@ func (a *AdminController) Register(e *echo.Echo) {
 	e.POST("/api/history/reset", a.resetHistory)
 	e.POST("/api/reset-all", a.resetAll)
 
-	e.PUT("/api/camera/:id/lines", a.putLines)          // 管理画面の線の編集
-	e.POST("/api/camera/:id/recognize", a.setRecognize) // 認識の開始・停止（スマホは、この指示に従う）
+	e.PUT("/api/camera/:id/lines", a.putLines)                    // 管理画面の線の編集
+	e.PUT("/api/camera/:id/camera-settings", a.setCameraSettings) // スマホのカメラの設定（解像度・ズーム・カメラ）
+	e.POST("/api/recognize/all", a.setRecognizeAll)               // 全端末の認識の一括開始・停止
+	e.POST("/api/camera/:id/recognize", a.setRecognize)           // 認識の開始・停止（スマホは、この指示に従う）
 	e.GET("/api/live/:id/info", a.liveInfo)
 	e.GET("/api/live/:id", a.liveWS) // H.264 の中継（WebSocket）
 }
@@ -188,13 +192,14 @@ func (a *AdminController) liveWS(c echo.Context) error {
 	defer conn.Conn.Close()
 
 	id := c.Param("id")
-	viewer, err := a.streams.Subscribe(id)
+	thumb := c.QueryParam("thumb") == "1" // 一覧の小さな表示（低い fps で足りる。時間の上限もない）
+	viewer, cancel, err := a.streams.Subscribe(id, thumb)
 	if err != nil {
 		code, reason := closeCodeFor(err)
 		conn.closeWith(code, reason)
 		return nil
 	}
-	defer a.streams.Unsubscribe(id, viewer)
+	defer cancel()
 
 	// 管理画面側が閉じたかを知るため、読み続ける（届くメッセージは使わない）
 	closed := make(chan struct{})
@@ -207,17 +212,33 @@ func (a *AdminController) liveWS(c echo.Context) error {
 		}
 	}()
 
-	limit := time.NewTimer(a.streams.MaxLiveSeconds()) // 閉じ忘れ対策の上限
-	defer limit.Stop()
+	var limitC <-chan time.Time // リアルタイム表示だけ、閉じ忘れ対策の上限を付ける
+	if !thumb {
+		limit := time.NewTimer(a.streams.MaxLiveSeconds())
+		defer limit.Stop()
+		limitC = limit.C
+	}
+	// 認識結果（検出枠など）は、映像と同じ接続で、変わったときだけ（約 0.25 秒ごとに確かめて）テキストで流す。
+	// 見ている間だけ読むので、見ていないときは、Redis を読みに行かない。
+	results := time.NewTicker(250 * time.Millisecond)
+	defer results.Stop()
+	var lastResult string
 	for {
 		select {
+		case <-results.C:
+			if raw := a.queue.Result(context.Background(), id); raw != nil && string(raw) != lastResult {
+				lastResult = string(raw)
+				if err := conn.WriteText(lastResult); err != nil {
+					return nil
+				}
+			}
 		case chunk := <-viewer.C:
 			if err := conn.WriteBinary(chunk); err != nil {
 				return nil
 			}
 		case <-closed:
 			return nil
-		case <-limit.C:
+		case <-limitC:
 			conn.closeWith(websocket.CloseNormalClosure, "time limit")
 			return nil
 		}
@@ -244,6 +265,9 @@ func (a *AdminController) putLines(c echo.Context) error {
 	if err != nil {
 		return fail(c, err)
 	}
+	if b, err := json.Marshal(cam.Lines); err == nil {
+		a.streams.SetLines(c.Param("id"), b) // 接続中のスマホにも、同じ線を伝える
+	}
 	return c.JSON(200, cam)
 }
 
@@ -262,4 +286,45 @@ func (a *AdminController) setRecognize(c echo.Context) error {
 	}
 	a.streams.SetRecognize(id, body.On)
 	return c.JSON(200, map[string]any{"id": id, "recognizing": body.On})
+}
+
+// setCameraSettings は、スマホのカメラの設定。 PUT /api/camera/F2-789E/camera-settings {"res":"1280x960","zoom":1.5,"device_id":"…"}
+func (a *AdminController) setCameraSettings(c echo.Context) error {
+	var in map[string]any
+	if err := c.Bind(&in); err != nil {
+		return fail(c, &services.Error{Code: 422, Message: "JSON を読めない"})
+	}
+	id := c.Param("id")
+	raw, err := a.cameras.SetCameraSettings(id, in)
+	if err != nil {
+		return fail(c, err)
+	}
+	a.streams.SetCameraSettings(id, raw)
+	return c.JSONBlob(200, raw)
+}
+
+// setRecognizeAll は、スマホのある全端末の認識を、まとめて開始・停止する。 POST /api/recognize/all {"on": true}
+func (a *AdminController) setRecognizeAll(c echo.Context) error {
+	var body struct {
+		On bool `json:"on"`
+	}
+	if err := c.Bind(&body); err != nil {
+		return fail(c, &services.Error{Code: 422, Message: "on を指定する"})
+	}
+	all, err := a.cameras.All()
+	if err != nil {
+		return fail(c, err)
+	}
+	n := 0
+	for _, cam := range all {
+		if cam.Source != "db" {
+			continue // yaml の固定端末には、スマホがない
+		}
+		if err := a.cameras.SetRecognizing(cam.ID, body.On); err != nil {
+			return fail(c, err)
+		}
+		a.streams.SetRecognize(cam.ID, body.On)
+		n++
+	}
+	return c.JSON(200, map[string]any{"on": body.On, "cameras": n})
 }

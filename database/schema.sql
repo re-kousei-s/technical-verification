@@ -75,6 +75,9 @@ ALTER TABLE crossings ADD COLUMN IF NOT EXISTS gate TEXT;
 -- 認識中か（管理画面が決める。スマホは、この指示に従って映像を送る）。再起動しても、続きから再開できるよう、DB に持つ
 ALTER TABLE cameras ADD COLUMN IF NOT EXISTS recognizing BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- スマホのカメラの設定（管理画面が決める）。例: {"res":"1280x960","zoom":1.0,"device_id":"…"}。空なら、スマホの既定
+ALTER TABLE cameras ADD COLUMN IF NOT EXISTS camera_settings JSONB NOT NULL DEFAULT '{}';
+
 -- 端末ごとの「カウントライン」。1 台に何本でも引ける（入口が複数なら、入口ごとに 1 本）。
 -- 例: [{"id": "l1", "name": "入口A", "line": [[x1,y1],[x2,y2]]}]  座標は画面に対する割合。
 -- 線は 1 本以上ある前提（0 本にはできない）。IN の向きは、始点→終点に対して画面の左側。
