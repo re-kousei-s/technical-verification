@@ -20,10 +20,10 @@ flowchart LR
     GW["gateway（nginx）<br/>自己署名の HTTPS<br/>:8000 / :8443 と :8080 / :8444"]
 
     subgraph BE["backend（Go: echo + gorm）"]
-      DEV["スマホ向けサーバー :8000<br/>送信ページ・登録 API・映像の WS・待機用の WS"]
+      DEV["スマホ向けサーバー :8000<br/>送信ページ・登録 API・スマホとの WS（1 本）"]
       ADM["管理画面向けサーバー :8080<br/>一覧 API・操作 API・ライブ中継 WS"]
       STR["StreamService<br/>受信・指示・間引き"]
-      HUB["LiveHub<br/>H.264 を中継し、GOP を覚える"]
+      HUB["Device（端末ごとのハブ）<br/>購読者に H.264 を配る・GOP を覚える"]
       FF["ffmpeg<br/>H.264 → JPEG（全フレーム）"]
     end
 
@@ -93,73 +93,80 @@ sequenceDiagram
 **パーティション：** 端末 ID の md5 を `PARTITIONS` で割った余りで、キュー（`frames:p0`…）が決まる（Go と Python で同じ計算）。
 同じ端末のフレームは、必ず同じ worker が、積まれた順に処理する（追跡の状態を持つため）。
 
-## 3. 認識の開始・停止（管理画面が決め、スマホは従う）
+## 3. 端末ごとのハブ（Device）：購読者のコールバックに配る
+
+スマホとの接続は、**1 台 1 本の WebSocket**（`/ws/:id`）。届いた H.264 のチャンクは、端末ごとのハブ（`Device`）に入り、登録されている購読者のコールバックに配られる。
+
+```mermaid
+flowchart LR
+  PH["スマホ<br/>/ws/:id（1 本）"] -- "H.264 のチャンク" --> PUB["Device.Publish<br/>GOP を覚える・受信の実測"]
+  PUB --> S1["購読者 1：Recognizer<br/>認識中だけ登録<br/>ffmpeg でデコード → 5fps に間引き → Redis"]
+  PUB --> S2["購読者 2：Viewer<br/>見ている間だけ登録<br/>H.264 をそのまま管理画面の WS へ"]
+  S1 --> RD[("Redis<br/>frames:p{n}")]
+  S2 --> AD["管理画面<br/>（ブラウザがデコード）"]
+  RD --> WK["worker"]
+  WK --> RS[("Redis<br/>result:{id}")]
+  RS -- "見ている間だけ、0.25 秒ごとに読む<br/>変わったら、同じ WS でテキストで流す" --> AD
+  CTL["control（0.3 秒ごと）<br/>あるべき状態を計算"] -- "状態の JSON（変わったときだけ）" --> PH
+  CTL -. "認識中になったら登録、止まったら解除" .-> S1
+```
+
+- 購読者が 1 つもなければ、届いたチャンクは、捨てる。普段（認識中だけ）は、Recognizer（Redis へ書く）の 1 つだけ。
+- 見ている人は 2 種類。**一覧の小さな表示（thumb）**は、低い fps（`thumb_fps` = 1）でよく、時間の上限もない。**リアルタイム表示**は、高い fps（`live_fps` = 15）を頼む。どちらも、認識していなくても、見られている間は、スマホが送る。
+- 見ている人がいる間だけ、Viewer が増える。新しい購読者には、覚えている GOP（最後のキーフレームから今まで）を最初に渡すので、途中から始めても映る。
+
+## 4. スマホとサーバーのやり取り（1 本の WebSocket）
 
 ```mermaid
 sequenceDiagram
   autonumber
   participant Ad as 管理画面
-  participant Be as backend
+  participant Be as backend（Device）
   participant Pg as PostgreSQL
-  participant Ct as スマホ（待機用 /ctl/:id）
-  participant Ph as スマホ（映像 /ws/:id）
+  participant Ph as スマホ（/ws/:id）
 
-  Note over Ct,Be: 送信ページを開いている間、待機用の WebSocket を、ずっとつなぐ
+  Ph->>Be: 接続（送信ページを開いている間は、つなぎ続ける）
+  Be-->>Ph: {"recognize":false,"send_fps":0,"preview":false}（送らない）
+
   Ad->>Be: POST /api/camera/:id/recognize {on: true}
   Be->>Pg: cameras.recognizing = true（再起動しても残る）
-  Be->>Ct: {"cmd":"recognize_start"}
-  Ct->>Ph: 符号化を始めて、映像を送る
-  Ph->>Be: H.264（約 5fps）
-  Note over Be: 以後、認識の流れ（図 2）が動く
+  Be->>Be: Recognizer を購読者に登録
+  Be-->>Ph: {"recognize":true,"send_fps":5,"preview":false}
+  Ph->>Be: H.264（5fps、解像度を落として送る）→ 認識（図 2）
+
+  Ad->>Be: ライブを開始（WebSocket /api/live/:id）
+  Be->>Be: Viewer を購読者に登録（GOP を先に渡す）
+  Be-->>Ph: {"recognize":true,"send_fps":15,"preview":true,"idr":true}
+  Ph->>Be: 15fps・元の解像度・最初は IDR
+  Be-->>Ad: H.264 をそのまま中継 + 認識結果をテキストで
+
+  Ad->>Be: ライブを停止（WebSocket を閉じる）
+  Be-->>Ph: {"recognize":true,"send_fps":5,"preview":false}
+  Note over Ph: 解像度を落として、5fps に戻る
+
   Ad->>Be: POST /api/camera/:id/recognize {on: false}
-  Be->>Pg: cameras.recognizing = false
-  Be->>Ct: {"cmd":"recognize_stop"}
-  Ct->>Ph: 送信を止める
-  Note over Be,Ct: 指示と実際の状態が違うとき、6 秒ごとにもう一度頼む。<br/>スマホが開き直されたら、DB の状態から、自動で再開する
+  Be-->>Ph: {"recognize":false,"send_fps":0,"preview":false}
+  Note over Ph: 映像を送るのをやめる（接続は、つないだまま）
 ```
 
-## 4. ライブ表示（見ている間だけ高い fps）
-
-```mermaid
-sequenceDiagram
-  autonumber
-  participant Ad as 管理画面（ブラウザ）
-  participant Be as backend（LiveHub）
-  participant Ph as スマホ
-
-  Ad->>Ad: 「ライブを開始」を押す（押すまでは、つながない）
-  Ad->>Be: WebSocket /api/live/:id
-  Be-->>Ad: 覚えている GOP（最後のキーフレーム → 今）
-  Be->>Ph: {"send_fps":15,"live":true,"idr":true}
-  Note over Ph: 次のフレームを、必ず IDR にして、15fps で送る
-  loop ライブ中
-    Ph->>Be: H.264 のチャンク
-    Be-->>Ad: そのまま中継（デコードしない）
-    Ad->>Ad: VideoDecoder でデコードして canvas に描く
-  end
-  Note over Be: 認識用の経路（ffmpeg → 5fps → キュー）は、ライブ中も止まらない
-  Ad->>Be: WebSocket を閉じる（「ライブを停止」）
-  Be->>Ph: {"send_fps":5,"live":false}
-```
-
-**認識を始めていない端末でも見られる：** スマホの送信ページが待機していれば、backend が待機用の接続から `live_start` を送る。
-端末は、プレビュー専用（`?mode=live`）の映像を送る。この映像は、デコードも、認識も、数えもしない。
+**スマホは、状態に従うだけ。** サーバーは、状態が変わったときだけ（念のため 10 秒ごとにも）、全体を 1 通で伝える。命令を何種類も送らないので、再接続しても、取りこぼさない。
+認識中でなく、誰も見ていなければ、`send_fps` は 0。ライブだけを見る場合も、認識は始まらない（Recognizer は登録されず、数えない）。
 
 ## 5. スマホの送信ページの状態
 
 ```mermaid
 stateDiagram-v2
   [*] --> 未登録
-  未登録 --> 待機中: フロアと名前を登録
-  待機中 --> 認識中: recognize_start
-  認識中 --> 待機中: recognize_stop
-  待機中 --> ライブ配信中: live_start（管理画面でライブを開始）
-  ライブ配信中 --> 待機中: live_stop（ライブを停止）
-  ライブ配信中 --> 認識中: recognize_start（プレビュー専用から、認識用に切り替え）
-  認識中 --> 認識中: send_fps（5 ⇄ 15）・idr（キーフレームを送り直す）
+  未登録 --> 待機中: フロアと名前を登録（接続する）
+  待機中 --> 認識中: send_fps = 5、recognize = true
+  認識中 --> 待機中: send_fps = 0
+  待機中 --> ライブ配信中: send_fps = 15、recognize = false
+  ライブ配信中 --> 待機中: send_fps = 0
+  ライブ配信中 --> 認識中: recognize = true（認識も始まる）
+  認識中 --> 認識中: preview の切り替え（解像度を変える）・fps の切り替え
   note right of 待機中
     カメラのプレビューと、設定パネルは、いつでも使える。
-    線の編集・認識の開始は、管理画面だけが行う
+    認識の開始・線の編集は、管理画面だけが行う
   end note
 ```
 
