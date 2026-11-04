@@ -12,7 +12,7 @@ import numpy as np
 from common.live import now_ms, ts_iso
 from common.messages import build_message
 from common.tiling import detect_tiled
-from libs.settings import DETECTOR
+from libs.settings import DETECTOR, STALE_MS
 
 log = logging.getLogger("worker")
 
@@ -33,6 +33,11 @@ class FrameProcessor:
             log.warning("未登録の端末のフレームを捨てた: %s", camera_id)
             return
         ts_ms = int(fields[b"ts_ms"])
+        # 溜まった古いフレームは、処理しない。あとから処理しても、通過だけが遅れて数に加わる（誤解のもと）。
+        # worker が追いつかないときや、再起動した直後に起きる。捨てた数は、stats.stale に数える
+        if now_ms() - ts_ms > STALE_MS:
+            self.stats.stale += 1
+            return
 
         frame = cv2.imdecode(np.frombuffer(fields[b"jpeg"], np.uint8), cv2.IMREAD_COLOR)
         if frame is None:

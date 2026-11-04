@@ -9,6 +9,7 @@ class Stats:
     def __init__(self):
         self.processed = 0  # 処理したフレーム数
         self.errors = 0  # 処理に失敗したフレーム数
+        self.stale = 0  # 古すぎて、処理せずに捨てたフレーム数
         self._infer_ms = deque(maxlen=50)  # 直近 50 フレームの推論時間（ミリ秒）
         self._lag_ms = deque(maxlen=50)  # 直近 50 フレームの遅れ（撮ってから処理し終えるまで）
 

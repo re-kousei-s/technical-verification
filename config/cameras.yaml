@@ -3,14 +3,14 @@
 # トラッカー・判定点・検出の最低スコアは matrix.yaml と同じ定義を使う。
 
 defaults:
-  sample_fps: 5          # ingest がデコード後に間引く、1秒あたりの枚数（端末は約5fpsで送る。2では足りない想定）
+  sample_fps: 3          # 認識に回す、1秒あたりの枚数。YOLOv8n は 1 枚 約 0.24 秒（1 台の worker で 約 4 枚/秒）なので、5 では追いつかない。3 でも、動画 4 本の精度は、5 と同じだった
   tracker: lowfps        # matrix.yaml の aggregator.trackers の name
   anchor: bottom_center  # 線を越えたかを判定する、人の枠の位置。足元（既定。縦の線にも床の線にも使える）/ center（中心）/ top_center（頭）/ box（枠全体。枠が線をまたいだまま消える場所では数えられない）
   tiling: none           # none / 2x2 / line
 
 # ライブ表示（管理画面で端末を選んで、その間だけ高い fps で見る）
 live:
-  normal_fps: 5          # ふだん端末が送る fps（送信ページの既定と合わせる）
+  normal_fps: 3          # 認識中に端末が送る fps（sample_fps と合わせる）
   live_fps: 15           # ライブ表示中に、端末へ送ってもらう fps（スマホが熱くなるので 15。上げるほど滑らかだが、端末が熱くなる）
   thumb_fps: 1           # 一覧（監視カメラの画面）に出ている間、端末へ送ってもらう fps（認識前でも、見られている間は送る）
   max_seconds: 600       # 1回のライブ表示の上限（閉じ忘れで端末が 30fps のままにならないように）

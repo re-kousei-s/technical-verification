@@ -57,7 +57,7 @@ class RedisOutput:
         """生きていることと、処理の速さを知らせる（30 秒で消える。止まれば管理画面に「停止」と出る）。"""
         self.r.hset(f"worker:{NAME}", mapping={
             "last_seen_ms": now_ms(), "detector": DETECTOR, "partitions": ",".join(map(str, OWNED)),
-            "processed": self.stats.processed, "errors": self.stats.errors,
+            "processed": self.stats.processed, "errors": self.stats.errors, "stale": self.stats.stale,
             "infer_ms_avg": self.stats.infer_ms_avg, "lag_ms_avg": self.stats.lag_ms_avg,
         })
         self.r.expire(f"worker:{NAME}", 30)
