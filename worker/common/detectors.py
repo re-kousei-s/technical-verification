@@ -6,6 +6,9 @@ mediapipe 系と rfdetr 系は依存パッケージが衝突しやすく、イ�
 
 
 def make_detector(name, min_score):
+    if name.startswith("yolox"):  # 例: yolox_tiny_416（ONNX、Apache-2.0。人が大量にいる場面に強い）
+        from common.detector_yolox import YoloxOnnxDetector
+        return YoloxOnnxDetector(name, min_score)
     if name.startswith("rfdetr_"):
         from common.detector_rfdetr import RFDETRDetector
         return RFDETRDetector(name, min_score)

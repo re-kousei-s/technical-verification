@@ -9,10 +9,12 @@ RUN if [ "$BACKEND" = "mediapipe" ]; then \
     fi
 WORKDIR /app
 COPY worker/requirements-${BACKEND}.txt requirements.txt
+# pip の代わりに uv を使う（依存の解決とインストールが、桁違いに速い）。
 # 依存が GUI 版 opencv を引き込むと libxcb が必要になるため、headless 版に差し替える
-RUN pip install --no-cache-dir -r requirements.txt \
- && pip uninstall -y opencv-python opencv-contrib-python opencv-python-headless opencv-contrib-python-headless \
- && pip install --no-cache-dir opencv-contrib-python-headless==5.0.0.93
+RUN pip install --no-cache-dir uv \
+ && uv pip install --system --no-cache -r requirements.txt \
+ && uv pip uninstall --system opencv-python opencv-contrib-python opencv-python-headless opencv-contrib-python-headless \
+ && uv pip install --system --no-cache opencv-contrib-python-headless==5.0.0.93
 COPY worker/common/ common/
 COPY worker/aggregator/ aggregator/
 COPY worker/libs/ libs/
