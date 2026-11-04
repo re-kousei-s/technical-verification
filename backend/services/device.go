@@ -36,6 +36,9 @@ type Device struct {
 	rt        Runtime
 	window    int // 受信フレームレートの実測用
 	windowAt  time.Time
+	rxWin     int       // 受信量の実測用（この 1 秒の間に届いたバイト数）
+	txWin     int       // 管理画面へ送った量の実測用
+	txAt      time.Time // 送った量の、いまの区切りの始まり
 }
 
 func newDevice(id string) *Device {
@@ -81,9 +84,12 @@ func (d *Device) Publish(chunk []byte) {
 	d.rt.Decoded++ // 受信したフレーム数（認識中は、デコードに渡す数でもある）
 	d.rt.LastSeen = time.Now()
 	d.window++
+	d.rt.RxBytes += int64(len(chunk))
+	d.rxWin += len(chunk)
 	if el := time.Since(d.windowAt); el >= time.Second {
 		d.rt.RxFPS = float64(d.window) / el.Seconds()
-		d.window, d.windowAt = 0, time.Now()
+		d.rt.RxKbps = float64(d.rxWin) * 8 / 1000 / el.Seconds()
+		d.window, d.rxWin, d.windowAt = 0, 0, time.Now()
 	}
 	handlers := make([]FrameHandler, 0, len(d.subs))
 	for _, h := range d.subs {
@@ -149,7 +155,19 @@ func (d *Device) reset() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.gop, d.gopBytes = nil, 0
-	d.rt.Active, d.rt.RxFPS = false, 0
+	d.rt.Active, d.rt.RxFPS, d.rt.RxKbps = false, 0, 0
+}
+
+// addTx は、管理画面へ送った量を足す（1 秒ごとに、速さを出し直す）。
+func (d *Device) addTx(n int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.rt.TxBytes += int64(n)
+	d.txWin += n
+	if el := time.Since(d.txAt); el >= time.Second {
+		d.rt.TxKbps = float64(d.txWin) * 8 / 1000 / el.Seconds()
+		d.txWin, d.txAt = 0, time.Now()
+	}
 }
 
 // update は、受信の状況を（ロックして）書き換える。

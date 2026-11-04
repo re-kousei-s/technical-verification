@@ -9,6 +9,7 @@ import { FloorSection } from "../components/floor/FloorSection";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { PageHeader } from "../components/ui/PageHeader";
+import { fmtKbps } from "../lib/format";
 import { useOverview } from "../hooks/useOverview";
 
 /**
@@ -23,6 +24,8 @@ export default function DashboardPage() {
   if (!data) return <p className="text-sub">読み込み中…</p>;
 
   const online = data.cameras.filter((c) => c.phone_online).length;
+  const rx = data.cameras.reduce((a, c) => a + c.rx_kbps, 0); // 全端末から受信している速さ
+  const tx = data.cameras.reduce((a, c) => a + c.tx_kbps, 0); // 管理画面へ送っている速さ
   const bulkRecognize = async (on: boolean) => {
     if (!await dialog.confirm(on ? "スマホがつながっている全端末で、認識を開始します。" : "全端末の認識を停止します。")) return;
     try { await api.recognizeAll(on); refresh(); } catch (e) { dialog.alert((e as Error).message); }
@@ -32,7 +35,7 @@ export default function DashboardPage() {
   return (
     <BulkPreviewContext.Provider value={bulkPreview}>
       <PageHeader
-        title="ダッシュボード" sub={`スマホ接続中 ${online} 台 ／ 全 ${data.cameras.length} 台。タイルを押すと、線の調整・リアルタイム表示・カメラの設定ができます`}
+        title="ダッシュボード" sub={`スマホ接続中 ${online} 台 ／ 全 ${data.cameras.length} 台 ／ 受信 ${fmtKbps(rx)}・管理画面へ ${fmtKbps(tx)}。タイルを押すと、線の調整・リアルタイム表示・カメラの設定ができます`}
         actions={<>
           <AddCameraButton />
           <Button variant={bulkPreview ? "outlined" : "filled"} onClick={() => setBulkPreview(!bulkPreview)}>

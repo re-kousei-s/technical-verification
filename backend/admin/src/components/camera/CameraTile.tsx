@@ -2,7 +2,7 @@ import { useContext, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useCameraLive } from "../../hooks/useCameraLive";
 import { useCamera } from "../../hooks/useOverview";
-import { camLabel } from "../../lib/format";
+import { camLabel, fmtKbps } from "../../lib/format";
 import { Button } from "../ui/Button";
 import { Chip } from "../ui/Chip";
 import { BulkPreviewContext } from "./BulkPreviewContext";
@@ -58,6 +58,7 @@ export function CameraTile({ cameraId }: { cameraId: string }) {
         <div className="absolute inset-x-0 top-0 flex items-center gap-2 bg-gradient-to-b from-black/70 to-transparent p-2">
           <b className="text-sm text-white">{camLabel(cam)}</b>
           <span className="text-xs text-white/70">{cam.floor}階</span>
+          {online && cam.rx_kbps > 0 && <span className="text-xs text-white/70">{fmtKbps(cam.rx_kbps)}</span>}
           <span className="ml-auto"><Chip tone={tone} dot>{state}</Chip></span>
         </div>
         {/* 映像を出しているときは、IN/OUT を下に重ねる */}

@@ -238,6 +238,7 @@ func (a *AdminController) liveWS(c echo.Context) error {
 			if err := conn.WriteBinary(chunk); err != nil {
 				return nil
 			}
+			a.streams.AddTx(id, len(chunk))
 		case <-closed:
 			return nil
 		case <-limitC:

@@ -30,6 +30,10 @@ type Runtime struct {
 	Dropped      int64     // キューがあふれて捨てたフレーム数
 	DecodeErrors int64     // デコーダに渡せず捨てたチャンク数
 	RxFPS        float64   // 受信しているフレームレート（チャンク/秒）
+	RxBytes      int64     // スマホから受信した量の累計（バイト）
+	RxKbps       float64   // いま受信している速さ（kbps）
+	TxBytes      int64     // 管理画面（ライブ表示）へ送った量の累計（バイト）
+	TxKbps       float64   // いま管理画面へ送っている速さ（kbps）
 	LastSeen     time.Time // 最後に受信した時刻
 }
 
@@ -111,8 +115,17 @@ func (s *StreamService) Snapshot(cameraID string) Runtime {
 	defer d.mu.Unlock()
 	rt := d.rt
 	rt.Active = d.phone != nil && !rt.LastSeen.IsZero() && time.Since(rt.LastSeen) < 3*time.Second
+	if !rt.Active {
+		rt.RxKbps = 0 // 届いていない間は、前の速さを残さない
+	}
+	if time.Since(d.txAt) > 2*time.Second {
+		rt.TxKbps = 0
+	}
 	return rt
 }
+
+// AddTx は、管理画面（ライブ表示）へ送った量を足す（トラフィックの表示用）。
+func (s *StreamService) AddTx(cameraID string, n int) { s.device(cameraID).addTx(n) }
 
 // IsStreaming は、いま映像を受信しているか。
 func (s *StreamService) IsStreaming(cameraID string) bool { return s.Snapshot(cameraID).Active }
@@ -300,6 +313,10 @@ type LiveInfo struct {
 	PhoneOnline  bool            `json:"phone_online"`  // スマホの送信ページが開いている（映像を送っていなくても）
 	Recognizing  bool            `json:"recognizing"`   // 認識中か
 	RxFPS        *float64        `json:"rx_fps"`        // 受信しているフレームレート
+	RxKbps       float64         `json:"rx_kbps"`       // スマホから受信している速さ（kbps）
+	TxKbps       float64         `json:"tx_kbps"`       // 管理画面へ送っている速さ（kbps）
+	RxBytes      int64           `json:"rx_bytes"`      // 受信の累計（バイト）
+	TxBytes      int64           `json:"tx_bytes"`      // 送信の累計（バイト）
 	LiveOn       bool            `json:"live_on"`       // 誰かがライブ表示を見ている
 	RequestedFPS float64         `json:"requested_fps"` // 端末に頼む fps
 	MaxSeconds   int             `json:"max_seconds"`
@@ -318,6 +335,7 @@ func (s *StreamService) LiveInfo(cameraID string) (LiveInfo, error) {
 	info := LiveInfo{
 		Streaming: rt.Active, PhoneOnline: d.phone != nil, Recognizing: d.recognize, LiveOn: d.viewers > 0,
 		RequestedFPS: y.Live.LiveFPS, MaxSeconds: y.Live.MaxSecond,
+		RxKbps: rt.RxKbps, TxKbps: rt.TxKbps, RxBytes: rt.RxBytes, TxBytes: rt.TxBytes,
 	}
 	if len(d.caps) > 0 {
 		info.Caps = json.RawMessage(d.caps)

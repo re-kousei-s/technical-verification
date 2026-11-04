@@ -11,3 +11,10 @@ export const clock = (iso: string | null | undefined) =>
 
 /** 端末の表示名（名前が無ければ ID） */
 export const camLabel = (c: { id: string; name: string | null }) => c.name || c.id;
+
+/** 通信の速さ（kbps）を、読みやすく。1000 以上は Mbps */
+export const fmtKbps = (k: number) => (k >= 1000 ? `${(k / 1000).toFixed(1)} Mbps` : `${Math.round(k)} kbps`);
+
+/** 通信量（バイト）を、読みやすく */
+export const fmtBytes = (b: number) =>
+  b >= 1 << 30 ? `${(b / (1 << 30)).toFixed(2)} GB` : b >= 1 << 20 ? `${(b / (1 << 20)).toFixed(1)} MB` : `${Math.round(b / 1024)} KB`;

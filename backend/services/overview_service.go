@@ -51,6 +51,10 @@ type CameraView struct {
 	Connected     bool       `json:"connected"`
 	LastSeenAgeMs *int64     `json:"last_seen_age_ms"`
 	Decoded       int64      `json:"decoded"`
+	RxKbps        float64    `json:"rx_kbps"` // スマホから受信している速さ（kbps）
+	TxKbps        float64    `json:"tx_kbps"` // 管理画面へ送っている速さ（kbps）
+	RxBytes       int64      `json:"rx_bytes"`
+	TxBytes       int64      `json:"tx_bytes"`
 	Enqueued      int64      `json:"enqueued"`
 	Dropped       int64      `json:"dropped"`
 	DecodeErrors  int64      `json:"decode_errors"`
@@ -166,7 +170,7 @@ func (s *OverviewService) Build(ctx context.Context) (*Overview, error) {
 		v := CameraView{
 			ID: c.ID, Floor: c.Floor, Name: c.Name, SampleFPS: c.SampleFPS, Tracker: c.Tracker, Anchor: c.Anchor,
 			Lines: names, Source: c.Source, Recognizing: c.Recognizing, PhoneOnline: s.streams.PhoneOnline(c.ID), Connected: s.streams.Sending(c.ID),
-			Decoded: rt.Decoded, Enqueued: rt.Enqueued, Dropped: rt.Dropped, DecodeErrors: rt.DecodeErrors,
+			Decoded: rt.Decoded, RxKbps: rt.RxKbps, TxKbps: rt.TxKbps, RxBytes: rt.RxBytes, TxBytes: rt.TxBytes, Enqueued: rt.Enqueued, Dropped: rt.Dropped, DecodeErrors: rt.DecodeErrors,
 			In: st.InCount, Out: st.OutCount, LastDets: st.LastDets, LastTracks: st.LastTracks,
 			LastFrameTs: st.LastFrameTs, Size: [2]*int{st.FrameW, st.FrameH},
 			HasImage: o.Services.Redis && s.queue.HasAnnotated(ctx, c.ID),

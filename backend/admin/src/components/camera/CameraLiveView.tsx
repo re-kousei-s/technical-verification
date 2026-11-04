@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useCameraLive } from "../../hooks/useCameraLive";
 import { useLineEditor } from "../../hooks/useLineEditor";
 import { useCamera } from "../../hooks/useOverview";
+import { fmtBytes, fmtKbps } from "../../lib/format";
 import { Button } from "../ui/Button";
 import { Chip } from "../ui/Chip";
 import { LineOverlay } from "./LineOverlay";
@@ -48,6 +49,7 @@ export function CameraLiveView({ cameraId }: { cameraId: string }) {
         {live.info && (
           <span className="text-xs text-sub">
             要求 {live.info.requested_fps}fps ／ 受信 {live.info.rx_fps != null ? live.info.rx_fps.toFixed(1) : "–"}fps ／ 表示 {live.shownFps != null ? live.shownFps.toFixed(1) : "–"}fps
+            ／ 受信 {fmtKbps(live.info.rx_kbps)}（累計 {fmtBytes(live.info.rx_bytes)}）／ 管理画面へ {fmtKbps(live.info.tx_kbps)}（累計 {fmtBytes(live.info.tx_bytes)}）
           </span>
         )}
         <span className="flex-1" />

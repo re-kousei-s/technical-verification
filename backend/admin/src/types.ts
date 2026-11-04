@@ -23,7 +23,7 @@ export interface Line { id: string; name: string; line: [number, number][] }
 export interface Camera {
   id: string; floor: number; name: string | null; sample_fps: number; tracker: string;
   anchor: string; lines: string[]; recognizing: boolean; phone_online: boolean; source: "db" | "yaml"; connected: boolean;
-  last_seen_age_ms: number | null; decoded: number; enqueued: number; dropped: number; decode_errors: number;
+  last_seen_age_ms: number | null; decoded: number; rx_kbps: number; tx_kbps: number; rx_bytes: number; tx_bytes: number; enqueued: number; dropped: number; decode_errors: number;
   in: number; out: number; last_dets: number | null; last_tracks: number | null; last_frame_ts: string | null;
   size: [number | null, number | null]; has_image: boolean;
 }
@@ -53,6 +53,7 @@ export interface Overview {
 /** /api/live/:id/info */
 export interface LiveInfo {
   streaming: boolean; recognizing: boolean; phone_online: boolean; rx_fps: number | null;
+  rx_kbps: number; tx_kbps: number; rx_bytes: number; tx_bytes: number;
   live_on: boolean; requested_fps: number; max_seconds: number;
   lines: Line[]; in: number; out: number; line_counts: Record<string, { in: number; out: number }>;
   caps: CameraCaps | null;
