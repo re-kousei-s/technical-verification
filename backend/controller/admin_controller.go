@@ -339,6 +339,7 @@ func (a *AdminController) deleteCamera(c echo.Context) error {
 		return fail(c, err)
 	}
 	a.streams.Forget(id)
+	a.queue.ReleasePartition(c.Request().Context(), id) // キューの割り当てを、空ける
 	return c.JSON(200, map[string]bool{"ok": true})
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -20,19 +21,87 @@ const consumerGroup = "recognizers"
 type QueueRepository struct {
 	rdb        *redis.Client
 	partitions int
+
+	mu    sync.Mutex
+	cache map[string]int // 端末 ID → 分割（Redis の割り当てを、覚えておく）
 }
 
+// assignKey は、端末 → 分割の割り当て（Redis のハッシュ）。一度決めたら、ずっと同じ分割（追跡の状態が、worker に残るため）
+const assignKey = "camera_partition"
+
 func NewQueueRepository(rdb *redis.Client, partitions int) *QueueRepository {
-	return &QueueRepository{rdb: rdb, partitions: partitions}
+	return &QueueRepository{rdb: rdb, partitions: partitions, cache: map[string]int{}}
 }
 
 func (q *QueueRepository) Ping(ctx context.Context) error { return q.rdb.Ping(ctx).Err() }
 
 // PartitionOf は、端末をどのキュー（= どの worker）に振るかを決める。
-// 同じ端末のフレームは必ず同じ worker に届くようにする（追跡の状態を持つため）。
-// Python 側（worker）と同じ式：md5(camera_id) を整数と見て、分割数で割った余り。
+// 同じ端末のフレームは、必ず同じ分割に届く（追跡の状態を持つため）。分割は、いずれかの worker が持つ（worker 側が、自動で分け合う）。
+//
+// 初めて見る端末は、**端末がいちばん少ない分割**に振る（ハッシュだと、2 台が同じ分割に重なって、worker を増やしても、1 台ぶんの
+// 負荷のままになることがある）。一度決めたら、Redis に残して、変えない。端末を削除したら、ReleasePartition で、空ける。
 func (q *QueueRepository) PartitionOf(cameraID string) int {
-	return partitionOf(cameraID, q.partitions)
+	q.mu.Lock()
+	if p, ok := q.cache[cameraID]; ok {
+		q.mu.Unlock()
+		return p
+	}
+	q.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	p, err := q.rdb.HGet(ctx, assignKey, cameraID).Int()
+	if err != nil || p < 0 || p >= q.partitions {
+		all, err := q.rdb.HGetAll(ctx, assignKey).Result()
+		if err != nil {
+			return partitionOf(cameraID, q.partitions) // Redis が答えないときは、ハッシュで代用（覚えない）
+		}
+		count := make([]int, q.partitions)
+		for _, s := range all {
+			if n, e := strconv.Atoi(s); e == nil && n >= 0 && n < q.partitions {
+				count[n]++
+			}
+		}
+		// 分割は、worker が分け合って持つ（鍵 partition_lock:{n} の値が、持ち主の名前）。
+		// 端末の数が、いちばん少ない worker の分割に振る。同じ worker の中では、端末がいちばん少ない分割に振る
+		// （端末が少ないだけの分割を選ぶと、2 台が、同じ worker の分割に重なって、worker を増やしても、1 台ぶんの負荷のままになる）
+		owner := make([]string, q.partitions)
+		load := map[string]int{} // worker 名 → その worker が持つ分割にいる、端末の数
+		for i := range owner {
+			owner[i], _ = q.rdb.Get(ctx, "partition_lock:"+strconv.Itoa(i)).Result()
+			load[owner[i]] += count[i]
+		}
+		best := 0
+		cost := func(i int) (int, int) {
+			if owner[i] == "" {
+				return 1 << 20, count[i] // 持ち主がいない分割（worker が、足りない）は、最後に
+			}
+			return load[owner[i]], count[i]
+		}
+		for i := 1; i < q.partitions; i++ {
+			li, ci := cost(i)
+			lb, cb := cost(best)
+			if li < lb || (li == lb && ci < cb) {
+				best = i
+			}
+		}
+		_ = q.rdb.HSetNX(ctx, assignKey, cameraID, best).Err() // 同時に決めても、先に書いた 1 つが、残る
+		if p, err = q.rdb.HGet(ctx, assignKey, cameraID).Int(); err != nil {
+			return best
+		}
+	}
+	q.mu.Lock()
+	q.cache[cameraID] = p
+	q.mu.Unlock()
+	return p
+}
+
+// ReleasePartition は、端末を削除したとき、割り当てを空ける（次に追加された端末が、その分割を使える）。
+func (q *QueueRepository) ReleasePartition(ctx context.Context, cameraID string) {
+	q.mu.Lock()
+	delete(q.cache, cameraID)
+	q.mu.Unlock()
+	_ = q.rdb.HDel(ctx, assignKey, cameraID).Err()
 }
 
 func streamName(partition int) string { return "frames:p" + strconv.Itoa(partition) }
