@@ -32,11 +32,11 @@ class Api {
     return data;
   }
 
-  /// 端末を登録する。戻り値は、端末の設定（id・floor・name・lines …）。
-  Future<Map<String, dynamic>> register(int floor, String name) async {
-    final r = await _client.post(_u('/api/register'),
-        headers: {'Content-Type': 'application/json'}, body: jsonEncode({'floor': floor, 'name': name}));
-    return Map<String, dynamic>.from(await _json(r));
+  /// 管理画面で追加された端末の一覧（フロアごと）。端末の追加は、管理画面だけ。スマホは、この一覧から選ぶ。
+  /// 戻り値：[{floor, devices: [{id, name, floor, source, connected, …}]}]
+  Future<List<Map<String, dynamic>>> floors() async {
+    final r = await _client.get(_u('/api/floors'));
+    return [for (final f in (await _json(r)) as List) Map<String, dynamic>.from(f as Map)];
   }
 
   /// 端末の設定と、累計の IN/OUT・フロアの概算。登録が無ければ null。
@@ -44,11 +44,6 @@ class Api {
     final r = await _client.get(_u('/api/cameras/${Uri.encodeComponent(id)}'));
     if (r.statusCode == 404) return null;
     return Map<String, dynamic>.from(await _json(r));
-  }
-
-  Future<void> unregister(String id) async {
-    final r = await _client.delete(_u('/api/cameras/${Uri.encodeComponent(id)}'));
-    await _json(r);
   }
 
   void close() => _client.close();

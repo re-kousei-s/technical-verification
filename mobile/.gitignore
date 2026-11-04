@@ -46,3 +46,6 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# 依存のバージョンは、各自の Flutter / Dart に合わせて解決する（古い SDK で、解決できなくなるのを避けるため、ロックは、置かない）
+pubspec.lock

@@ -182,7 +182,7 @@ class StreamService : LifecycleService(), ControlSocket.Listener {
     /** {"recognize","send_fps","preview","idr","camera":{res,zoom,device_id},"lines":[...]} */
     override fun onState(state: JSONObject) {
         recognize = state.optBoolean("recognize")
-        val newFps = state.optDouble("send_fps", 0.0)
+        val newFps = state.optDouble("send_fps", 0.0).coerceAtMost(CameraSource.MAX_CAPTURE_FPS.toDouble()) // 送るのも、最大 15fps
         val newPreview = state.optBoolean("preview")
         if (state.optBoolean("idr")) idrWanted = true
 

@@ -27,6 +27,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   List<List<Offset>> _lines = [];
   Map<String, dynamic>? _cam; // サーバーの端末情報（累計 IN/OUT・フロアの概算）
   bool _batteryOk = true;
+  bool _previewOn = true; // 狙いを定める画像を、受けるか（止めると、サービスは、画像を作らない。電池・熱を節約）
   String? _error;
   StreamSubscription? _sub;
   Timer? _poll;
@@ -90,7 +91,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       final cam = await _api.camera(widget.cameraId);
       if (!mounted) return;
       if (cam == null) {
-        setState(() => _error = 'サーバーに、この端末の登録がありません。登録し直してください。');
+        setState(() => _error = 'サーバーに、この端末がありません（管理画面で削除されました）。端末を選び直してください。');
         return;
       }
       setState(() {
@@ -106,7 +107,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // 画面が見えている間だけ、狙いを定めるための画像を、サービスから受ける
-    StreamChannel.setUiVisible(state == AppLifecycleState.resumed);
+    StreamChannel.setUiVisible(_previewOn && state == AppLifecycleState.resumed);
   }
 
   @override
@@ -119,26 +120,15 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     super.dispose();
   }
 
-  Future<void> _unregister() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('登録を解除しますか？'),
-        content: const Text('これまでの通過の記録は、残ります。'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('やめる')),
-          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('解除する')),
-        ],
-      ),
-    );
-    if (ok != true) return;
+  /// プレビューの一時停止・再開。止めている間、サービスは、狙いを定める画像を作らない（送信は続く）。
+  Future<void> _togglePreview() async {
+    setState(() => _previewOn = !_previewOn);
+    await StreamChannel.setUiVisible(_previewOn);
+  }
+
+  /// 端末を選び直す（一覧に戻る）。サーバーの登録は、消えない。端末の削除は、管理画面だけ。
+  Future<void> _changeDevice() async {
     await StreamChannel.stop();
-    try {
-      await _api.unregister(widget.cameraId);
-    } catch (e) {
-      setState(() => _error = e.toString());
-      return;
-    }
     await widget.store.setCameraId(null);
     widget.onUnregistered();
   }
@@ -151,7 +141,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     return Scaffold(
       appBar: AppBar(
         title: Text(name),
-        actions: [IconButton(icon: const Icon(Icons.link_off), tooltip: '登録を解除', onPressed: _unregister)],
+        actions: [IconButton(icon: const Icon(Icons.swap_horiz), tooltip: '端末を選び直す', onPressed: _changeDevice)],
       ),
       body: ListView(
         padding: const EdgeInsets.all(12),
@@ -163,11 +153,20 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               Container(color: Colors.black),
               if (_thumb != null) Image.memory(_thumb!, fit: BoxFit.contain, gaplessPlayback: true),
               CustomPaint(painter: _LinePainter(_lines)),
-              if (_thumb == null)
+              if (!_previewOn)
+                const Center(child: Text('プレビューを一時停止中', style: TextStyle(color: Colors.white70)))
+              else if (_thumb == null)
                 const Center(child: Text('カメラの画像を待っています…', style: TextStyle(color: Colors.white70))),
             ]),
           ),
-          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: _togglePreview,
+              icon: Icon(_previewOn ? Icons.pause : Icons.play_arrow),
+              label: Text(_previewOn ? 'プレビューを一時停止' : 'プレビューを再開'),
+            ),
+          ),
           Wrap(spacing: 8, runSpacing: 8, children: [
             Chip(
               avatar: Icon(Icons.circle, size: 12, color: _status.connected ? Colors.green : Colors.orange),
