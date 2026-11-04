@@ -16,7 +16,8 @@ import (
 type Conn interface {
 	ReadMessage() (messageType int, data []byte, err error)
 	WriteText(s string) error
-	Close() error
+	Close() error // 新しいページに置き換えられたとき
+	Kick() error  // 端末が削除されたとき
 }
 
 const binaryMessage = 2 // WebSocket のバイナリメッセージの種類（映像のチャンク）
@@ -59,6 +60,24 @@ func (s *StreamService) device(id string) *Device {
 		s.devices[id] = d
 	}
 	return d
+}
+
+// Forget は、端末が削除されたとき、接続中のスマホを切り、ハブを捨てる（スマホは、登録がないと知って、つなぎ直さない）。
+func (s *StreamService) Forget(cameraID string) {
+	s.mu.Lock()
+	d := s.devices[cameraID]
+	delete(s.devices, cameraID)
+	s.mu.Unlock()
+	if d == nil {
+		return
+	}
+	d.mu.Lock()
+	phone := d.phone
+	d.recognize = false
+	d.mu.Unlock()
+	if phone != nil {
+		_ = phone.Kick()
+	}
 }
 
 // SetRecognize は、管理画面の「認識を開始／停止」。接続中のスマホには、0.3 秒以内に伝わる。
@@ -284,7 +303,8 @@ type LiveInfo struct {
 	LiveOn       bool            `json:"live_on"`       // 誰かがライブ表示を見ている
 	RequestedFPS float64         `json:"requested_fps"` // 端末に頼む fps
 	MaxSeconds   int             `json:"max_seconds"`
-	Caps         json.RawMessage `json:"caps"` // スマホが報告した、カメラの能力（なければ null）
+	Caps         json.RawMessage `json:"caps"`            // スマホが報告した、カメラの能力（なければ null）
+	Settings     json.RawMessage `json:"camera_settings"` // 管理画面が決めた、カメラの設定（解像度・ズーム・ビットレート など）
 }
 
 func (s *StreamService) LiveInfo(cameraID string) (LiveInfo, error) {
@@ -301,6 +321,9 @@ func (s *StreamService) LiveInfo(cameraID string) (LiveInfo, error) {
 	}
 	if len(d.caps) > 0 {
 		info.Caps = json.RawMessage(d.caps)
+	}
+	if len(d.settings) > 2 {
+		info.Settings = json.RawMessage(d.settings)
 	}
 	d.mu.Unlock()
 	if rt.Active {

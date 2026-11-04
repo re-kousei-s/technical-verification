@@ -76,6 +76,12 @@ func (w *wsConn) Close() error {
 	return nil
 }
 
+// Kick は、端末が削除されたとき、services が呼ぶ。スマホは、4404（登録がない）を見て、つなぎ直さない。
+func (w *wsConn) Kick() error {
+	w.closeWith(closeNotFound, "camera deleted")
+	return nil
+}
+
 // closeCodeFor は、エラーを WebSocket のクローズコードに直す。
 func closeCodeFor(err error) (int, string) {
 	var e *services.Error

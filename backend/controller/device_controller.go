@@ -35,10 +35,8 @@ func (d *DeviceController) Register(e *echo.Echo) {
 	e.GET("/healthz", func(c echo.Context) error { return c.JSON(200, map[string]bool{"ok": true}) })
 
 	e.GET("/api/floors", d.listFloors)
-	e.POST("/api/register", d.register)
 	e.GET("/api/cameras/:id", d.getCamera)
 	e.PATCH("/api/cameras/:id", d.patchCamera)
-	e.DELETE("/api/cameras/:id", d.deleteCamera)
 	e.GET("/api/cameras/:id/result", d.result)
 	e.POST("/api/cameras/:id/reset", d.resetCamera)
 	e.POST("/api/reset-all", d.resetAll)
@@ -81,22 +79,6 @@ func (d *DeviceController) listFloors(c echo.Context) error {
 		last.Devices = append(last.Devices, deviceView{cam, d.streams.IsStreaming(cam.ID)})
 	}
 	return c.JSON(200, out)
-}
-
-// register は、端末を登録する。{"floor": 2, "name": "階段A"}
-func (d *DeviceController) register(c echo.Context) error {
-	var body struct {
-		Floor int    `json:"floor"`
-		Name  string `json:"name"`
-	}
-	if err := c.Bind(&body); err != nil {
-		return fail(c, &services.Error{Code: 422, Message: "floor と name を JSON で指定する"})
-	}
-	cam, err := d.cameras.Register(body.Floor, body.Name)
-	if err != nil {
-		return fail(c, err)
-	}
-	return c.JSON(200, cam)
 }
 
 // getCamera は、端末の設定（線）と、受信・カウントの状況。送信ページが 2 秒ごとに読む。
@@ -149,14 +131,6 @@ func (d *DeviceController) patchCamera(c echo.Context) error {
 		}
 	}
 	return c.JSON(200, cam)
-}
-
-// deleteCamera は、登録の解除。
-func (d *DeviceController) deleteCamera(c echo.Context) error {
-	if err := d.cameras.Delete(c.Param("id"), d.streams.IsStreaming(c.Param("id"))); err != nil {
-		return fail(c, err)
-	}
-	return c.JSON(200, map[string]bool{"ok": true})
 }
 
 // result は、worker が出した最新の認識結果（検出枠など）。送信ページが映像に重ねる。

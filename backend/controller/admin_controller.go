@@ -60,6 +60,8 @@ func (a *AdminController) Register(e *echo.Echo) {
 
 	e.PUT("/api/camera/:id/lines", a.putLines)                    // 管理画面の線の編集
 	e.PUT("/api/camera/:id/camera-settings", a.setCameraSettings) // スマホのカメラの設定（解像度・ズーム・カメラ）
+	e.POST("/api/cameras", a.addCamera)                           // 端末の追加（スマホからは、追加できない。管理画面だけ）
+	e.DELETE("/api/camera/:id", a.deleteCamera)                   // 端末の削除（スマホが接続中でも、切って削除する）
 	e.POST("/api/recognize/all", a.setRecognizeAll)               // 全端末の認識の一括開始・停止
 	e.POST("/api/camera/:id/recognize", a.setRecognize)           // 認識の開始・停止（スマホは、この指示に従う）
 	e.GET("/api/live/:id/info", a.liveInfo)
@@ -327,4 +329,32 @@ func (a *AdminController) setRecognizeAll(c echo.Context) error {
 		n++
 	}
 	return c.JSON(200, map[string]any{"on": body.On, "cameras": n})
+}
+
+// deleteCamera は、端末の登録を削除する。通過の記録（crossings）は、残る。
+// スマホが接続中なら、切る（スマホは、登録がないと知って、つなぎ直さない）。yaml で固定した端末は、削除できない。
+func (a *AdminController) deleteCamera(c echo.Context) error {
+	id := c.Param("id")
+	if err := a.cameras.Delete(id, false); err != nil {
+		return fail(c, err)
+	}
+	a.streams.Forget(id)
+	return c.JSON(200, map[string]bool{"ok": true})
+}
+
+// addCamera は、端末を追加する。 POST /api/cameras {"floor": 2, "name": "階段A"}
+// 端末の追加は、管理画面だけができる。スマホは、追加された端末の一覧から、選ぶだけ。
+func (a *AdminController) addCamera(c echo.Context) error {
+	var body struct {
+		Floor int    `json:"floor"`
+		Name  string `json:"name"`
+	}
+	if err := c.Bind(&body); err != nil {
+		return fail(c, &services.Error{Code: 422, Message: "floor と name を指定する"})
+	}
+	cam, err := a.cameras.Register(body.Floor, body.Name)
+	if err != nil {
+		return fail(c, err)
+	}
+	return c.JSON(200, cam)
 }

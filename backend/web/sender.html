@@ -91,20 +91,12 @@
 
   <!-- 1. 登録 -->
   <section id="setup">
-    <div class="card">
-      <b>この端末を登録する</b>
-      <label for="floor">フロア（階）</label>
-      <input id="floor" type="number" inputmode="numeric" placeholder="例: 2" list="floorList">
-      <datalist id="floorList"></datalist>
-      <label for="name">端末の名前（任意）</label>
-      <input id="name" type="text" maxlength="30" placeholder="例: 階段A 上り口">
-      <div class="row" style="margin-top:14px"><button class="primary" id="registerBtn">登録して始める</button></div>
-      <div class="msg" id="setupMsg"></div>
-    </div>
-    <div class="card hidden" id="existingCard">
-      <b>登録済みの端末を使う</b>
-      <div class="hint">ブラウザのデータを消したときなど、前の登録を引き継ぎます。</div>
+    <div class="card" id="existingCard">
+      <b>この端末を選ぶ</b>
+      <div class="hint">端末の追加は、管理画面で行います。管理画面で追加した端末の中から、選んでください。</div>
       <div id="existing"></div>
+      <div class="hint hidden" id="noDevices" style="margin-top:8px">まだ端末がありません。管理画面で、端末を追加してください。</div>
+      <div class="row" style="margin-top:12px"><button id="reloadBtn">一覧を更新</button></div>
     </div>
   </section>
 
@@ -222,7 +214,7 @@
 
         <div class="card">
           <pre class="hint" id="diag" style="white-space:pre-wrap;word-break:break-all;margin:0"></pre>
-          <button class="danger" id="unregisterBtn" style="margin-top:8px">この端末の登録を解除</button>
+          <button id="unregisterBtn" style="margin-top:8px">端末を選び直す（一覧に戻る）</button>
         </div>
       </div>
     </div>
@@ -233,7 +225,8 @@
 const SEND_FPS = 5;              // 端末から送る頻度
 const KEYFRAME_SECONDS = 10;     // 10秒ごと。接続直後と、フレームを捨てた直後は別に強制するので、定期的なものは長くてよい
 let curFps = SEND_FPS, encCfg = null, capCanvas = null, capCtx = null, capW = 0, capH = 0, baseBitrate = 0;
-const BITRATE_720P = 1_000_000;   // 1280x720 のとき。解像度に比例させる（0.6〜3 Mbps）
+const BITRATE_720P = 1_000_000;   // 1280x720 のとき。解像度に比例させる（0.6〜3 Mbps）。管理画面で指定すると、そちらが優先される
+let bitrateKbps = 0;               // 管理画面が指定したビットレート（kbps）。0 は、自動（解像度と fps から決める）
 const MAX_BUFFERED = 1_500_000;  // 送信待ちがこれを超えたらフレームを捨てる（通信が詰まったとき）
 const $ = (id) => document.getElementById(id);
 const api = async (path, opts = {}) => {
@@ -269,11 +262,10 @@ if (!("VideoEncoder" in window)) $("mainMsg").textContent = "このブラウザ�
 /* ---------- 登録 ---------- */
 async function loadFloors() {
   const floors = await api("/api/floors");
-  $("floorList").replaceChildren(...floors.map(f => Object.assign(document.createElement("option"), { value: f.floor })));
   const ex = $("existing");
   ex.replaceChildren();
   const devices = floors.flatMap(f => f.devices.filter(d => d.source === "db").map(d => ({ ...d, floor: f.floor })));
-  $("existingCard").classList.toggle("hidden", !devices.length);
+  $("noDevices").classList.toggle("hidden", devices.length > 0);
   for (const d of devices) {
     const row = document.createElement("div"); row.className = "dev";
     const label = document.createElement("div");
@@ -286,14 +278,7 @@ async function loadFloors() {
   }
 }
 
-$("registerBtn").onclick = async () => {
-  $("setupMsg").textContent = "";
-  const floor = parseInt($("floor").value, 10);
-  if (Number.isNaN(floor)) { $("setupMsg").textContent = "フロアを入力してください"; return; }
-  try {
-    enter(await api("/api/register", { method: "POST", body: JSON.stringify({ floor, name: $("name").value }) }));
-  } catch (e) { $("setupMsg").textContent = "登録に失敗: " + e.message; }
-};
+$("reloadBtn").onclick = () => loadFloors().catch(() => {});
 
 function enter(c) {
   cam = c; store.set({ id: c.id });
@@ -314,7 +299,7 @@ async function openCamera() {
   if (stream) return;
   const pf = prefs.get();
   const [W, H] = (pf.res || DEFAULT_RES).split("x").map(Number);
-  const video = { width: { ideal: W }, height: { ideal: H } };
+  const video = { width: { ideal: W }, height: { ideal: H }, frameRate: { ideal: 15, max: 15 } };   // カメラが撮る fps も、最大 15（電池と熱を抑える）
   if (pf.deviceId) video.deviceId = { exact: pf.deviceId }; else video.facingMode = { ideal: "environment" };
   try {
     try { stream = await navigator.mediaDevices.getUserMedia({ video, audio: false }); }
@@ -391,7 +376,19 @@ let appliedCam = "{}";
 function applyCameraSettings(c) {
   const str = JSON.stringify(c || {});
   if (str === appliedCam || str === "{}") return;
+  const prev = JSON.parse(appliedCam);
   appliedCam = str;
+  // ビットレート：映像を取り直さず、符号化の設定だけを変える（送信中でも、すぐ効く）
+  const kbps = Number(c.bitrate) || 0;
+  if (kbps !== bitrateKbps) {
+    bitrateKbps = kbps;
+    if (encoder && encCfg) {
+      const bitrate = kbps ? kbps * 1000 : Math.round(Math.min(4_000_000, baseBitrate * Math.max(1, 1 + (curFps - SEND_FPS) / 12.5)));
+      try { encCfg = { ...encCfg, bitrate }; encoder.configure(encCfg); needKey = true; } catch (e) { $("mainMsg").textContent = "ビットレートを変えられません: " + e.message; }
+    }
+  }
+  // カメラ・解像度・ズーム：変わったときだけ、映像を取り直す
+  if ((c.res || "") === (prev.res || "") && (c.device_id || "") === (prev.device_id || "") && (c.zoom ?? null) === (prev.zoom ?? null)) return;
   const p = {};
   if (c.res) p.res = c.res;
   if (c.device_id) p.deviceId = c.device_id;
@@ -527,7 +524,7 @@ async function pickEncoderConfig(srcW, srcH) {
   const tried = [];
   for (const pass of [{ latencyMode: "realtime" }, {}]) {            // 2周目は latencyMode を指定しない
     for (const [w, h] of sizes) for (const hw of ["no-preference", "prefer-software"]) for (const format of ["annexb", "avc"]) for (const codec of CODECS) {
-      const cfg = { codec, width: w, height: h, bitrate: bitrateFor(w, h), framerate: SEND_FPS, hardwareAcceleration: hw, avc: { format }, ...pass };
+      const cfg = { codec, width: w, height: h, bitrate: bitrateKbps ? bitrateKbps * 1000 : bitrateFor(w, h), framerate: SEND_FPS, hardwareAcceleration: hw, avc: { format }, ...pass };
       let ok = false, why = "";
       try { ok = (await VideoEncoder.isConfigSupported(cfg)).supported; } catch (e) { why = " " + (e.name || e.message); }
       if (ok) return { cfg, w, h, tried };
@@ -593,7 +590,7 @@ async function applyState(m) {
     lines = m.lines; renderLineList(); drawOverlay();
   }
   if (m.idr) needKey = true;
-  const n = Math.max(0, Math.min(30, Math.round(m.send_fps || 0)));
+  const n = Math.max(0, Math.min(15, Math.round(m.send_fps || 0)));   // 最大 15fps
   const pv = !!m.preview;
   if (pv !== previewWanted) {   // 見られ始めた／見られなくなった：解像度を変えるので、符号化をやり直す
     previewWanted = pv;
@@ -652,7 +649,7 @@ async function startSendingInner(fps) {
   baseBitrate = cfg.bitrate; curFps = fps; capW = w; capH = h;
   encCfg = cfg;
   if (curFps !== SEND_FPS) {      // 最初から高い fps で始める（ライブ表示のための配信）
-    encCfg = { ...cfg, framerate: curFps, bitrate: Math.round(Math.min(4_000_000, baseBitrate * (1 + (curFps - SEND_FPS) / 12.5))) };
+    encCfg = { ...cfg, framerate: curFps, bitrate: bitrateKbps ? bitrateKbps * 1000 : Math.round(Math.min(4_000_000, baseBitrate * (1 + (curFps - SEND_FPS) / 12.5))) };
     encoder.configure(encCfg);
   }
   capCanvas = new OffscreenCanvas(w, h); capCtx = capCanvas.getContext("2d");
@@ -679,7 +676,7 @@ function applySendFps(n) {
   if (!running || !encoder || !encCfg || n === curFps) { setConn(true, connText()); return; }
   curFps = n;
   // fps が上がるぶん、ビットレートも上げる（5fps = 基準、30fps で 3 倍。上限 4Mbps）
-  const bitrate = Math.round(Math.min(4_000_000, baseBitrate * Math.max(1, 1 + (n - SEND_FPS) / 12.5)));
+  const bitrate = bitrateKbps ? bitrateKbps * 1000 : Math.round(Math.min(4_000_000, baseBitrate * Math.max(1, 1 + (n - SEND_FPS) / 12.5)));
   try { encoder.configure({ ...encCfg, framerate: n, bitrate }); }
   catch (e) { $("mainMsg").textContent = "fps を切り替えられません: " + e.message; return; }
   needKey = true;
@@ -714,9 +711,8 @@ $("resetAllBtn").onclick = async () => {
 };
 
 $("unregisterBtn").onclick = async () => {
-  if (!confirm("この端末の登録を解除します。これまでの通過の記録は残ります。")) return;
+  // 端末の削除は、管理画面だけ。ここは、一覧に戻って、別の端末を選び直すだけ（サーバーの登録は、消えない）
   closeWs();
-  try { await api(`/api/cameras/${cam.id}`, { method: "DELETE" }); } catch (e) { $("mainMsg").textContent = e.message; return; }
   store.clear(); cam = null;
   closeStream();
   $("main").classList.add("hidden"); $("setup").classList.remove("hidden"); document.body.classList.remove("inmain"); loadFloors();

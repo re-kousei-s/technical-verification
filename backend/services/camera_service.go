@@ -8,6 +8,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 
 	"humandetect/config"
 	"humandetect/models"
@@ -154,7 +155,9 @@ func (s *CameraService) Register(floor int, name string) (*models.CameraConfig, 
 		CameraID: fmt.Sprintf("F%d-%s", floor, strings.ToUpper(hex.EncodeToString(b))),
 		Floor:    floor,
 		// 最初は、画面の中央に横線を 1 本（あとから動かしたり、増やしたりできる）
-		Lines: models.JSON(`[{"id":"l1","name":"線1","line":[[0,0.5],[1,0.5]]}]`),
+		Lines:          models.JSON(`[{"id":"l1","name":"線1","line":[[0,0.5],[1,0.5]]}]`),
+		CameraSettings: models.JSON(`{}`), // カメラの設定は、空（スマホの既定）。NULL にしない
+		RegisteredAt:   time.Now(),
 	}
 	if name != "" {
 		cam.Name = &name
@@ -234,7 +237,11 @@ func (s *CameraService) SetCameraSettings(id string, in map[string]any) (json.Ra
 	if cam.Source != "db" {
 		return nil, errConflict("yaml で固定したカメラには、スマホがない")
 	}
+	// 前の設定に、重ねる（1 項目だけ送っても、他の項目は、残る）
 	out := map[string]any{}
+	if len(cam.CameraSettings) > 2 {
+		_ = json.Unmarshal(cam.CameraSettings, &out)
+	}
 	if v, ok := in["res"].(string); ok && v != "" {
 		var w, h int
 		if n, _ := fmt.Sscanf(v, "%dx%d", &w, &h); n != 2 || w < 160 || h < 120 || w > 4096 || h > 4096 {
@@ -247,6 +254,12 @@ func (s *CameraService) SetCameraSettings(id string, in map[string]any) (json.Ra
 			return nil, errInvalid("ズームは 0.1〜20")
 		}
 		out["zoom"] = v
+	}
+	if v, ok := in["bitrate"].(float64); ok { // kbps。0 は、自動
+		if v < 0 || (v > 0 && (v < 100 || v > 8000)) {
+			return nil, errInvalid("ビットレートは 100〜8000 kbps（0 で自動）")
+		}
+		out["bitrate"] = int(v)
 	}
 	if v, ok := in["device_id"].(string); ok && v != "" {
 		if len(v) > 200 {
