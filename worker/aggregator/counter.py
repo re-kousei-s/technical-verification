@@ -76,6 +76,10 @@ class CameraCounter:
         self.gates = []  # 線ごとの HeadingGate
         self.debug = []  # 画面に出す用：人ごとの、足元・動きのベクトル・線ごとのスコア
         self._prev = {}  # 追跡ID → 1 つ前の足元の点
+        heading = dict(heading or {})
+        # 同じ追跡 ID が、同じ向きで、続けて数えられるのを止める秒数（線をまたいで）。入口に 2 本の線を引くと、1 人が両方で OUT になるため
+        self.same_id_seconds = float(heading.pop("same_id_seconds", 5.0))
+        self._last_dir = {}  # 追跡ID → (最後に数えた経過秒, 向き)
         for item in lines:
             (x1, y1), (x2, y2) = line_to_px(item["line"], frame_w, frame_h)
             # 線の上で立ち止まった人の足元のぶれで IN/OUT を何度も数えないよう、
@@ -107,6 +111,10 @@ class CameraCounter:
             hs = (tracked.xyxy[:, 3] - tracked.xyxy[:, 1]) if len(tracked) else []
             for (name, _), gate in zip(self.zones, self.gates):
                 for direction, tid, (x, y) in gate.update(ids, pts, hs):
+                    last = self._last_dir.get(int(tid))
+                    if last and last[1] == direction and (t - self.t0) - last[0] <= self.same_id_seconds:
+                        continue  # 同じ人が、別の線でも、同じ向きで数えられた：数えない（IN を取りこぼしていても、時間がたてば、また数える）
+                    self._last_dir[int(tid)] = (t - self.t0, direction)
                     self.events.append((t - self.t0, direction, int(tid), x, y, name))
             self._update_debug(tracked, points, t)  # 画面に出す用（スコアは、このフレームの更新のあと）
             return tracked

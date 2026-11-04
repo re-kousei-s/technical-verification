@@ -53,7 +53,7 @@ class HeadingGate:
 
     def __init__(self, start, end, fps, frame=None, zone=0.4, reach=0.3, v_min=0.1, min_win=0.08, c_min=0.5, window=5,
                  cross_w=1.0, flip_seconds=5.0, threshold=3.0, confirm_frames=6, vanish_frames=3, vanish_bonus=2.0,
-                 return_penalty=3.0, cap=6.0, born_bonus=2.0, **_ignored):
+                 return_penalty=3.0, cap=6.0, born_bonus=2.0, dedupe_seconds=2.0, dedupe_dist=0.8, **_ignored):
         self.a = np.array(start, float)
         v = np.array(end, float) - self.a
         self.length = float(np.hypot(*v)) or 1.0
@@ -64,6 +64,9 @@ class HeadingGate:
         self.window, self.cross_w, self.flip_frames = window, cross_w, int(flip_seconds * fps)
         self.threshold, self.confirm, self.vanish_frames, self.vanish_bonus = threshold, confirm_frames, vanish_frames, vanish_bonus
         self.return_penalty, self.cap, self.born_bonus = return_penalty, cap, born_bonus
+        self.dedupe_frames, self.dedupe_dist = max(1, int(dedupe_seconds * fps)), dedupe_dist
+        self.recent = []  # 最近数えた (フレーム番号, 向き, 点)。追跡 ID が付け替わった同じ人を、2 回数えないため
+        self.tick = 0
         self.tracks = {}
 
     # ---- 幾何 ----
@@ -115,6 +118,7 @@ class HeadingGate:
 
     def update(self, ids, points, heights):
         """1 フレーム。いま追跡できている人の、足元の点と枠の高さを渡す。数える人がいれば [(方向, 追跡ID, 点)] を返す。"""
+        self.tick += 1
         out, seen = [], set()
         for tid, pt, h in zip(ids, points, heights):
             tid = int(tid)
@@ -198,7 +202,8 @@ class HeadingGate:
         for tid in [t for t in self.tracks if t not in seen]:
             st = self.tracks[tid]
             st.absent += 1
-            if (st.absent == self.vanish_frames and not st.bonus and st.score != 0 and st.last_pt is not None
+            # すでに数えた人（またいだ・向きで確定したなど）は、消えたことでは、もう数えない（1 人を 2 回数えないため）
+            if (st.absent == self.vanish_frames and not st.bonus and st.counted == 0 and st.score != 0 and st.last_pt is not None
                     and st.min_d <= self.reach * st.last_h and np.sign(st.score) * st.last_d >= -self.reach * st.last_h
                     and self._zone(st.last_pt, st.last_d, st.last_h)):
                 st.bonus = True  # 線の後ろで消えた：スコアに加える。待たずに、判定する
@@ -206,7 +211,20 @@ class HeadingGate:
                 self._decide(tid, st, out, wait=False)
             if st.absent >= 8:
                 del self.tracks[tid]
-        return out
+        return self._dedupe(out)
+
+    def _dedupe(self, out):
+        """同じ向きで、すぐ近く・すぐあとの数えは、同じ人（追跡 ID の付け替わり）とみて、1 回にする。
+        検出の頻度が低いと、線の上で一瞬止まっただけで、追跡が切れて、新しい ID が付き、またぎと消えるの両方で、数えられることがある。"""
+        self.recent = [r for r in self.recent if self.tick - r[0] <= self.dedupe_frames]
+        kept = []
+        for direction, tid, pt in out:
+            h = max(self.tracks[tid].last_h or 1.0, 1.0) if tid in self.tracks else 1.0
+            if any(r[1] == direction and float(np.hypot(*(np.asarray(pt, float) - r[2]))) <= self.dedupe_dist * h for r in self.recent):
+                continue
+            self.recent.append((self.tick, direction, np.asarray(pt, float)))
+            kept.append((direction, tid, pt))
+        return kept
 
     def _decide(self, tid, st, out, wait=True):
         """スコアが閾値に届いたら、確定待ちにする。待つ間、保たれたら、数える（待たないときは、すぐ数える）。"""
