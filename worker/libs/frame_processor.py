@@ -59,7 +59,7 @@ class FrameProcessor:
 
         # 4) 保存と出力
         self.writer.write(camera_id, cam, ts_ms, w, h, events, len(boxes), len(tracked), infer_ms, lag_ms)
-        self.output.publish_result(camera_id, ts_ms, w, h, tracked, events, infer_ms, lag_ms)
+        self.output.publish_result(camera_id, ts_ms, w, h, tracked, events, infer_ms, lag_ms, counter.debug)
         self.output.publish_image(camera_id, frame, tracked, cam)
         self.stats.add(infer_ms, lag_ms)
 

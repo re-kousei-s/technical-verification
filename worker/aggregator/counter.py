@@ -10,6 +10,7 @@ import supervision as sv
 import trackers
 
 from aggregator.edge_crossing import EdgeCrossing
+from aggregator.heading_gate import HeadingGate
 from aggregator.lowfps_tracker import LowFpsTracker
 from common.messages import ts_to_sec
 from common.tiling import line_to_px
@@ -64,13 +65,17 @@ class CameraCounter:
     """
 
     def __init__(self, lines, frame_w, frame_h, tracker_cfg, sample_fps, anchor="bottom_center",
-                 min_crossing_seconds=0.0, edge_margin=0.0, edge_confirm_seconds=1.5):
+                 min_crossing_seconds=0.0, edge_margin=0.0, edge_confirm_seconds=1.5, method="line", heading=None):
         """lines は [{"id", "name", "line": [[x1,y1],[x2,y2]]}, ...]（座標は画面に対する割合）。"""
         anchors = ANCHORS[anchor]
         # 通過の記録に残す座標：1 点で判定するときはその点、枠全体のときは枠の中心
         self.anchor = anchors[0] if len(anchors) == 1 else sv.Position.CENTER
         self.zones = []  # (線の名前, LineZone)
         self.edges = []  # 線ごとの EdgeCrossing（zones と同じ順）
+        self.heading = method == "heading"  # True なら、線をまたぐ判定ではなく、方向のスコア（HeadingGate）で数える
+        self.gates = []  # 線ごとの HeadingGate
+        self.debug = []  # 画面に出す用：人ごとの、足元・動きのベクトル・線ごとのスコア
+        self._prev = {}  # 追跡ID → 1 つ前の足元の点
         for item in lines:
             (x1, y1), (x2, y2) = line_to_px(item["line"], frame_w, frame_h)
             # 線の上で立ち止まった人の足元のぶれで IN/OUT を何度も数えないよう、
@@ -80,10 +85,12 @@ class CameraCounter:
                 minimum_crossing_threshold=max(1, round(min_crossing_seconds * sample_fps)),
             )
             self.zones.append((item["name"], zone))
+            self.gates.append(HeadingGate((x1, y1), (x2, y2), sample_fps, (frame_w, frame_h), **(heading or {})))
             # 線のぎりぎりを通る人の補助（edge_margin = 人の枠の高さの何倍までを「際」とするか。0 なら使わない）
-            self.edges.append(EdgeCrossing((x1, y1), (x2, y2), edge_margin, max(2, round(edge_confirm_seconds * sample_fps))) if edge_margin > 0 else None)
+            self.edges.append(EdgeCrossing((x1, y1), (x2, y2), edge_margin, max(2, round(edge_confirm_seconds * sample_fps)), (frame_w, frame_h)) if edge_margin > 0 else None)
         self.tracker = build_tracker(tracker_cfg, sample_fps)
         self.t0 = None
+        self.frame_size = (frame_w, frame_h)
         # 通過の記録：(経過秒, "in"/"out", 追跡ID, 判定点x, 判定点y, 線の名前)
         self.events = []
 
@@ -94,6 +101,15 @@ class CameraCounter:
             self.t0 = t
         tracked = self.tracker.update(to_detections(msg), timestamp=t - self.t0)
         points = tracked.get_anchors_coordinates(self.anchor) if len(tracked) else None
+        if self.heading:  # 方向のスコアで数える（線をまたぐ瞬間は、見ない）
+            ids = tracked.tracker_id if len(tracked) else []
+            pts = points if len(tracked) else []
+            hs = (tracked.xyxy[:, 3] - tracked.xyxy[:, 1]) if len(tracked) else []
+            for (name, _), gate in zip(self.zones, self.gates):
+                for direction, tid, (x, y) in gate.update(ids, pts, hs):
+                    self.events.append((t - self.t0, direction, int(tid), x, y, name))
+            self._update_debug(tracked, points, t)  # 画面に出す用（スコアは、このフレームの更新のあと）
+            return tracked
         ids = tracked.tracker_id if len(tracked) else []
         heights = (tracked.xyxy[:, 3] - tracked.xyxy[:, 1]) if len(tracked) else []
         for (name, zone), edge in zip(self.zones, self.edges):
@@ -107,4 +123,37 @@ class CameraCounter:
             if edge is not None:  # LineZone が数えなかった「線のぎりぎり」の通過
                 for direction, tid, (x, y) in edge.update(ids, points if len(tracked) else [], heights, counted):
                     self.events.append((t - self.t0, direction, int(tid), x, y, name))
+        self._update_debug(tracked, points, t)
         return tracked
+
+    def _update_debug(self, tracked, points, t):
+        """画面に出す用の情報を作る。人ごとに [追跡ID, x, y, vx, vy, 速さ, [[線の名前, 向き, スコア, 線のそばか, 数えたか], ...]]。
+        x, y は画面に対する割合。vx, vy は 1 秒あたりの動き（画面に対する割合）、速さは、枠の高さ/秒（判定に使う値）。"""
+        self.debug = []
+        if not len(tracked):
+            self._prev = {}
+            return
+        w, h = self.frame_size
+        prev, now = self._prev, {}
+        dt = (t - self._prev_t) if getattr(self, "_prev_t", None) is not None else 0.0
+        for i in range(len(tracked)):
+            tid = int(tracked.tracker_id[i])
+            x, y = float(points[i][0]), float(points[i][1])
+            box_h = float(tracked.xyxy[i][3] - tracked.xyxy[i][1])
+            now[tid] = (x, y)
+            vx = vy = speed = 0.0
+            vec = self.gates[0].vector(tid) if (self.heading and self.gates) else None  # 判定に使っている、なめらかな動き
+            if vec is not None:
+                vx, vy = float(vec[0]), float(vec[1])
+                speed = float(np.hypot(vx, vy)) / max(box_h, 1.0)
+            elif tid in prev and dt > 0:
+                vx, vy = (x - prev[tid][0]) / dt, (y - prev[tid][1]) / dt  # px/秒
+                speed = float(np.hypot(vx, vy)) / max(box_h, 1.0)
+            lines = []
+            if self.heading:
+                for (name, _), gate in zip(self.zones, self.gates):
+                    inf = gate.info(tid)
+                    if inf:
+                        lines.append([name, inf[0], inf[1], inf[2], inf[3]])
+            self.debug.append([tid, round(x / w, 4), round(y / h, 4), round(vx / w, 4), round(vy / h, 4), round(speed, 2), lines])
+        self._prev, self._prev_t = now, t

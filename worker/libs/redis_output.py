@@ -24,7 +24,7 @@ class RedisOutput:
         self._last_image_at = {}  # 端末ID → 画像を最後に出した時刻
         self._recent_events = {}  # 端末ID → 最近の通過（最大 5 件）
 
-    def publish_result(self, camera_id, ts_ms, w, h, tracked, new_events, infer_ms, lag_ms):
+    def publish_result(self, camera_id, ts_ms, w, h, tracked, new_events, infer_ms, lag_ms, vectors=None):
         """最新の認識結果を出す。枠の座標は「画面に対する割合」（0〜1）にしてある。"""
         recent = self._recent_events.setdefault(camera_id, deque(maxlen=5))
         for e in new_events:
@@ -40,6 +40,7 @@ class RedisOutput:
         self.r.set(f"result:{camera_id}", json.dumps({
             "ts_ms": ts_ms, "published_ms": now_ms(), "w": w, "h": h, "boxes": boxes,
             "events": list(recent), "infer_ms": round(infer_ms), "lag_ms": round(lag_ms),
+            "vectors": vectors or [],  # 人ごとの、足元・動きのベクトル・線ごとのスコア（画面で見られる）
         }), ex=10)  # 10 秒で消える。送信が止まれば、古い枠は出なくなる
 
     def publish_image(self, camera_id, frame, tracked, cam):

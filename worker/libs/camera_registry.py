@@ -56,6 +56,7 @@ class CameraRegistry:
                 cam["lines"], w, h, self.trackers[cam["tracker"]], float(cam["sample_fps"]),
                 cam["anchor"], self.agg.get("min_crossing_seconds", 0.0), self.agg.get("edge_margin", 0.0),
                 self.agg.get("edge_confirm_seconds", 1.5),
+                self.agg.get("method", "line"), self.agg.get("heading"),
             )
             # 分割して検出する設定（tiling: line）のときだけ、1 本目の線の周りを切り出す
             tiles = make_tiles(w, h, cam.get("tiling", "none"), cam["lines"][0]["line"])
