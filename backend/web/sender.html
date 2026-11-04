@@ -130,6 +130,7 @@
     <div class="bottom">
       <div class="actions">
         <button class="gbtn" id="pickVideoBtn">🎞 動画</button>
+        <button class="gbtn" id="pickScreenBtn">🖥 画面共有</button>
         <div class="runstate" id="runState">待機中</div>
       </div>
     </div>
@@ -324,6 +325,7 @@ async function openTestVideo() {
   catch (e) { $("mainMsg").textContent = "動画を再生できません: " + e.message; }
 }
 function setTestVideo(file) {
+  if (screenOn) stopScreenShare(false);   // 画面共有中に、動画を選んだ：画面共有を止める
   closeStream();
   if (testUrl) URL.revokeObjectURL(testUrl);
   testUrl = file ? URL.createObjectURL(file) : null;
@@ -336,6 +338,44 @@ function setTestVideo(file) {
 }
 $("testFile").onchange = () => setTestVideo($("testFile").files[0] || null);
 $("testOff").onclick = () => setTestVideo(null);
+/* ---------- 画面共有（カメラの代わりに、画面・ウィンドウ・タブの映像を取り込む） ----------
+   PC のブラウザで、スマホ役の動画（再生中のウィンドウなど）を、そのまま取り込める。getDisplayMedia は、HTTPS が要る。
+   スマホのブラウザの多くは、対応していない。 */
+let screenOn = false;
+async function startScreenShare() {
+  if (!navigator.mediaDevices?.getDisplayMedia) {
+    $("mainMsg").textContent = "このブラウザは、画面共有に対応していません（PC の Chrome・Edge で使えます。HTTPS で開いてください）";
+    return;
+  }
+  try {
+    const s = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15, max: 15 } }, audio: false });
+    if (testUrl) { URL.revokeObjectURL(testUrl); testUrl = null; $("testOff").classList.add("hidden"); $("pickVideoBtn").textContent = "🎞 動画"; $("testMsg").textContent = ""; }
+    closeStream();   // カメラは、止める
+    const was = running, fps = curFps;
+    if (was) stopSending();   // 映像の大きさが変わるので、符号化をやり直す
+    stream = s; screenOn = true;
+    const v = $("video"); v.srcObject = s; v.loop = false; v.muted = true; v.playsInline = true;
+    await v.play();
+    s.getVideoTracks()[0].onended = () => stopScreenShare(true);   // ブラウザの「共有を停止」で、終わったとき
+    $("pickScreenBtn").textContent = "🖥 共有を止める"; $("mainMsg").textContent = ""; drawOverlay();
+    if (was) await startSending(fps);
+  } catch (e) {
+    if (e.name !== "NotAllowedError") $("mainMsg").textContent = "画面共有を始められません: " + e.message;   // 選ばずに閉じたときは、何も出さない
+  }
+}
+// 画面共有を止める。backToCamera が true なら、カメラに戻す
+function stopScreenShare(backToCamera) {
+  if (!screenOn) return;
+  screenOn = false;
+  closeStream();
+  const was = running, fps = curFps;
+  if (was) stopSending();
+  const v = $("video"); v.srcObject = null;
+  $("pickScreenBtn").textContent = "🖥 画面共有";
+  if (backToCamera) openCamera().then(() => { if (was) startSending(fps); });
+}
+$("pickScreenBtn").onclick = () => (screenOn ? stopScreenShare(true) : startScreenShare());
+
 // メイン画面の「動画」ボタン：動画ファイルを選ぶ（すでに動画を使っているときは、カメラに戻す）
 $("pickVideoBtn").onclick = () => { if (testUrl) setTestVideo(null); else $("testFile").click(); };
 
@@ -399,6 +439,7 @@ function applyCameraSettings(c) {
 
 // カメラや解像度を変える：映像を取り直す。送信中だったら、つなぎ直して再開する
 async function reopenCamera() {
+  if (screenOn) return;   // 画面共有中は、カメラの設定の変更を、受けない
   const was = running, fps = curFps;
   if (was) stopSending();              // 解像度が変わるので、符号化をやり直す
   closeStream();
