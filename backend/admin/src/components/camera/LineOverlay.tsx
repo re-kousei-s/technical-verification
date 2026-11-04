@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import { clampPt, inNormal, lineColor, segDist, shiftLine, type Pt } from "../../lib/lines";
-import type { Line } from "../../types";
+import type { Line, VectorRow } from "../../types";
 
 interface Props {
   lines: Line[];
@@ -8,6 +8,8 @@ interface Props {
   width: number;
   height: number;
   boxes?: [number, number, number, number, number][];
+  /** 足元の動きのベクトルと、線ごとのスコア（出すかどうかは、呼び出し側が決める） */
+  vectors?: VectorRow[];
   /** 編集中のときだけ渡す */
   edit?: { selected: number; onSelect: (i: number) => void; onChange: (i: number, pts: Pt[]) => void };
 }
@@ -18,7 +20,7 @@ type Drag = { i: number; k: number; start: Pt; orig: Pt[] }; // k=-1 は、線�
  * 映像の上に重ねる SVG。線・IN の向き・検出枠を描き、edit があるときは、マウス/指で線を動かせる。
  *   端の○をドラッグ → 線の形、線の上をドラッグ → 線ごと移動
  */
-export function LineOverlay({ lines, width, height, boxes, edit }: Props) {
+export function LineOverlay({ lines, width, height, boxes, vectors, edit }: Props) {
   const svg = useRef<SVGSVGElement>(null);
   const drag = useRef<Drag | null>(null);
 
@@ -80,6 +82,32 @@ export function LineOverlay({ lines, width, height, boxes, edit }: Props) {
           {id >= 0 && <text x={x1 * width + 3} y={y1 * height - 4} fill="#34c759" fontSize={12} fontWeight={700}>#{id}</text>}
         </g>
       ))}
+      {vectors?.map(([id, x, y, vx, vy, speed, scores]) => {
+        // 足元の点から、0.8 秒ぶんの動きを、矢印で出す。動いている（判定に使う速さ以上）ときは緑、止まっているときは灰色
+        const px = x * width, py = y * height, ex = px + vx * 0.8 * width, ey = py + vy * 0.8 * height;
+        const moving = speed >= 0.1;
+        const col = moving ? "#34c759" : "#a0a0a0";
+        const ang = Math.atan2(ey - py, ex - px);
+        const active = scores.filter((s) => s[2] > 0 || s[4] !== 0);
+        return (
+          <g key={`v${id}`}>
+            <circle cx={px} cy={py} r={5} fill={col} stroke="#000" strokeWidth={1} />
+            {moving && <>
+              <line x1={px} y1={py} x2={ex} y2={ey} stroke={col} strokeWidth={3} />
+              <polygon fill={col} points={`${ex},${ey} ${ex - 10 * Math.cos(ang - 0.45)},${ey - 10 * Math.sin(ang - 0.45)} ${ex - 10 * Math.cos(ang + 0.45)},${ey - 10 * Math.sin(ang + 0.45)}`} />
+            </>}
+            <text x={px + 8} y={py + 16} fill={col} fontSize={11} fontWeight={700} stroke="#000" strokeWidth={0.4} paintOrder="stroke">
+              {`#${id} ${speed.toFixed(1)}h/s`}
+            </text>
+            {active.map(([name, dir, score, inz, counted], k) => (
+              <text key={name} x={px + 8} y={py + 30 + k * 13} fontSize={11} fontWeight={700} stroke="#000" strokeWidth={0.4} paintOrder="stroke"
+                fill={counted !== 0 ? "#ffd60a" : inz ? "#fff" : "#bbb"}>
+                {`${name} ${dir > 0 ? "IN" : dir < 0 ? "OUT" : "–"} スコア${score}${counted !== 0 ? "（数えた）" : ""}`}
+              </text>
+            ))}
+          </g>
+        );
+      })}
       {lines.map((ln, i) => {
         const col = lineColor(i);
         const [a, b] = ln.line.map(([x, y]) => [x * width, y * height] as Pt);

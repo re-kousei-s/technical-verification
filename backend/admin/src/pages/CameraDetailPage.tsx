@@ -4,6 +4,7 @@ import { CameraLiveView } from "../components/camera/CameraLiveView";
 import { CameraSettingsPanel } from "../components/camera/CameraSettingsPanel";
 import { CameraSnapshot } from "../components/camera/CameraSnapshot";
 import { RecognizeButton } from "../components/camera/RecognizeButton";
+import { CameraDeleteButton } from "../components/camera/CameraDeleteButton";
 import { CameraResetButton } from "../components/camera/CameraResetButton";
 import { CameraStats } from "../components/camera/CameraStats";
 import { CrossingsTable } from "../components/CrossingsTable";
@@ -25,7 +26,7 @@ export default function CameraDetailPage() {
       <PageHeader
         title={<span className="flex items-center gap-3">{camLabel(cam)}<Chip tone={cam.connected ? "ok" : "off"} dot>{cam.connected ? "接続中" : "切断"}</Chip></span>}
         sub={`${cam.id} ／ ${cam.floor}階 ／ 認識 ${cam.sample_fps}fps ／ 認識の開始・停止、ライブ、線の編集は、ここから行います`}
-        actions={<><RecognizeButton cameraId={cam.id} /><CameraResetButton cameraId={cam.id} /></>}
+        actions={<><RecognizeButton cameraId={cam.id} /><CameraResetButton cameraId={cam.id} /><CameraDeleteButton cameraId={cam.id} /></>}
       />
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
         <Card title="ライブ" className="min-w-0"><CameraLiveView cameraId={cam.id} /></Card>

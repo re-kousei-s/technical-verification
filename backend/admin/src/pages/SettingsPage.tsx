@@ -1,3 +1,4 @@
+import { useDialog } from "../components/ui/DialogProvider";
 import { api } from "../api";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
@@ -6,10 +7,11 @@ import { useOverview } from "../hooks/useOverview";
 
 /** 消す操作を、ここにまとめる（どれも、確認してから実行する） */
 export default function SettingsPage() {
+  const dialog = useDialog();
   const { refresh } = useOverview();
   const run = (msg: string, fn: () => Promise<unknown>) => async () => {
-    if (!confirm(msg)) return;
-    try { await fn(); refresh(); alert("実行しました"); } catch (e) { alert((e as Error).message); }
+    if (!await dialog.confirm(msg)) return;
+    try { await fn(); refresh(); dialog.alert("実行しました"); } catch (e) { dialog.alert((e as Error).message); }
   };
   const rows = [
     { title: "全フロアを 0 に戻す（閉場）", desc: "フロアの人数の概算を 0 にします。IN/OUT の履歴は残ります。",

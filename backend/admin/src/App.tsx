@@ -1,5 +1,6 @@
 import { HashRouter, Route, Routes } from "react-router-dom";
 import { AppShell } from "./components/layout/AppShell";
+import { DialogProvider } from "./components/ui/DialogProvider";
 import { OverviewProvider } from "./hooks/useOverview";
 import CameraDetailPage from "./pages/CameraDetailPage";
 import CamerasPage from "./pages/CamerasPage";
@@ -12,6 +13,7 @@ import SystemPage from "./pages/SystemPage";
 // ページの切り替えは、URL の # 以降で行う（サーバー側に、ページごとの入口を作らなくてよい）
 export default function App() {
   return (
+    <DialogProvider>
     <OverviewProvider>
       <HashRouter>
         <AppShell>
@@ -27,5 +29,6 @@ export default function App() {
         </AppShell>
       </HashRouter>
     </OverviewProvider>
+    </DialogProvider>
   );
 }

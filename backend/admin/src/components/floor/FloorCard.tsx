@@ -1,3 +1,4 @@
+import { useDialog } from "../ui/DialogProvider";
 import { api } from "../../api";
 import { camLabel } from "../../lib/format";
 import { useOverview } from "../../hooks/useOverview";
@@ -13,20 +14,21 @@ const LEVELS = {
 
 /** フロア 1 つぶんの、人数の概算と、補正・履歴リセット */
 export function FloorCard({ floor: f }: { floor: Floor }) {
+  const dialog = useDialog();
   const { data, refresh } = useOverview();
   const lv = f.level ? LEVELS[f.level] : null;
   const names = (id: string) => { const c = data?.cameras.find((x) => x.id === id); return c ? camLabel(c) : id; };
 
   const correct = async () => {
-    const v = prompt(`${f.floor}階の人数を、実際の人数に直します`, String(f.count));
+    const v = await dialog.prompt(`${f.floor}階の人数を、実際の人数に直します`, String(f.count));
     if (v === null) return;
     const n = parseInt(v, 10);
-    if (Number.isNaN(n) || n < 0) return alert("0 以上の整数を入力してください");
-    try { await api.setFloorCount(f.floor, n); refresh(); } catch (e) { alert((e as Error).message); }
+    if (Number.isNaN(n) || n < 0) return dialog.alert("0 以上の整数を入力してください");
+    try { await api.setFloorCount(f.floor, n); refresh(); } catch (e) { dialog.alert((e as Error).message); }
   };
   const resetHistory = async () => {
-    if (!confirm(`${f.floor}階の IN/OUT の履歴を消します。\nフロアの人数の概算は変わりません。元には戻せません。`)) return;
-    try { await api.resetHistory({ floor: f.floor }); refresh(); } catch (e) { alert((e as Error).message); }
+    if (!await dialog.confirm(`${f.floor}階の IN/OUT の履歴を消します。\nフロアの人数の概算は変わりません。元には戻せません。`)) return;
+    try { await api.resetHistory({ floor: f.floor }); refresh(); } catch (e) { dialog.alert((e as Error).message); }
   };
 
   return (

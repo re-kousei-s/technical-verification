@@ -1,3 +1,4 @@
+import { useDialog } from "../ui/DialogProvider";
 import { useState } from "react";
 import { api } from "../../api";
 import { useCamera, useOverview } from "../../hooks/useOverview";
@@ -9,6 +10,7 @@ import { Chip } from "../ui/Chip";
  * スマホは、この指示に従って、「認識中」の間だけ映像を送る（数秒で切り替わる）。
  */
 export function RecognizeButton({ cameraId }: { cameraId: string }) {
+  const dialog = useDialog();
   const cam = useCamera(cameraId);
   const { refresh } = useOverview();
   const [busy, setBusy] = useState(false);
@@ -16,7 +18,7 @@ export function RecognizeButton({ cameraId }: { cameraId: string }) {
 
   const toggle = async () => {
     setBusy(true);
-    try { await api.setRecognize(cam.id, !cam.recognizing); refresh(); } catch (e) { alert((e as Error).message); } finally { setBusy(false); }
+    try { await api.setRecognize(cam.id, !cam.recognizing); refresh(); } catch (e) { dialog.alert((e as Error).message); } finally { setBusy(false); }
   };
   const sending = cam.connected; // 認識用の映像が、実際に届いているか
   return (

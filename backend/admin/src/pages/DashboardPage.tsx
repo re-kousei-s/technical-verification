@@ -1,5 +1,7 @@
+import { useDialog } from "../components/ui/DialogProvider";
 import { useState } from "react";
 import { api } from "../api";
+import { AddCameraButton } from "../components/camera/AddCameraButton";
 import { BulkPreviewContext } from "../components/camera/BulkPreviewContext";
 import { CameraTile } from "../components/camera/CameraTile";
 import { CrossingsTable } from "../components/CrossingsTable";
@@ -15,14 +17,15 @@ import { useOverview } from "../hooks/useOverview";
  * 上のボタンで、一括の認識開始・停止と、一括のプレビュー（低い fps）。タイルを押すと、端末のページへ。
  */
 export default function DashboardPage() {
+  const dialog = useDialog();
   const { data, refresh } = useOverview();
   const [bulkPreview, setBulkPreview] = useState(false);
   if (!data) return <p className="text-sub">読み込み中…</p>;
 
   const online = data.cameras.filter((c) => c.phone_online).length;
   const bulkRecognize = async (on: boolean) => {
-    if (!confirm(on ? "スマホがつながっている全端末で、認識を開始します。" : "全端末の認識を停止します。")) return;
-    try { await api.recognizeAll(on); refresh(); } catch (e) { alert((e as Error).message); }
+    if (!await dialog.confirm(on ? "スマホがつながっている全端末で、認識を開始します。" : "全端末の認識を停止します。")) return;
+    try { await api.recognizeAll(on); refresh(); } catch (e) { dialog.alert((e as Error).message); }
   };
   const byId = new Map(data.cameras.map((c) => [c.id, c]));
 
@@ -31,6 +34,7 @@ export default function DashboardPage() {
       <PageHeader
         title="ダッシュボード" sub={`スマホ接続中 ${online} 台 ／ 全 ${data.cameras.length} 台。タイルを押すと、線の調整・リアルタイム表示・カメラの設定ができます`}
         actions={<>
+          <AddCameraButton />
           <Button variant={bulkPreview ? "outlined" : "filled"} onClick={() => setBulkPreview(!bulkPreview)}>
             {bulkPreview ? "一括プレビューを停止" : "一括プレビュー開始（低 fps）"}
           </Button>
@@ -43,7 +47,7 @@ export default function DashboardPage() {
           {f.cameras.filter((c) => byId.has(c.id)).map((c) => <CameraTile key={c.id} cameraId={c.id} />)}
         </FloorSection>
       ))}
-      {!data.cameras.length && <p className="text-sub">まだ端末が登録されていません。スマホで送信ページを開いて、登録してください。</p>}
+      {!data.cameras.length && <p className="text-sub">まだ端末がありません。「＋ 端末を追加」で追加してください。</p>}
       <div className="mt-8">
         <Card title="直近の通過" pad={false}><CrossingsTable limit={10} /></Card>
       </div>

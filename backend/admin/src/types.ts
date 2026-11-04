@@ -56,6 +56,8 @@ export interface LiveInfo {
   live_on: boolean; requested_fps: number; max_seconds: number;
   lines: Line[]; in: number; out: number; line_counts: Record<string, { in: number; out: number }>;
   caps: CameraCaps | null;
+  /** 管理画面で決めた、カメラの設定（なければ null） */
+  camera_settings: { res?: string; zoom?: number; device_id?: string; bitrate?: number } | null;
 }
 
 /** スマホが報告する、カメラの能力と、いまの設定 */
@@ -66,4 +68,7 @@ export interface CameraCaps {
 }
 
 /** /api/camera/:id/result（[x1,y1,x2,y2,追跡ID]、座標は割合） */
-export interface DetectResult { boxes?: [number, number, number, number, number][]; stale?: boolean }
+/** 人ごとの、足元・動きのベクトル・線ごとのスコア（worker が出す）。[追跡ID, x, y, vx, vy, 速さ, [[線の名前, 向き(1=IN,-1=OUT), スコア, 線のそばか, 数えたか]]] */
+export type VectorRow = [number, number, number, number, number, number, [string, number, number, boolean, number][]];
+
+export interface DetectResult { boxes?: [number, number, number, number, number][]; vectors?: VectorRow[]; stale?: boolean }

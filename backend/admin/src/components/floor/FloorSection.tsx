@@ -1,3 +1,4 @@
+import { useDialog } from "../ui/DialogProvider";
 import type { ReactNode } from "react";
 import { api } from "../../api";
 import { useOverview } from "../../hooks/useOverview";
@@ -9,14 +10,15 @@ const LEVELS = { blue: { label: "青", tone: "info" as const }, yellow: { label:
 
 /** フロア 1 つぶんの見出し（人数の概算・補正）と、端末のタイルを並べる場所 */
 export function FloorSection({ floor: f, children }: { floor: Floor; children: ReactNode }) {
+  const dialog = useDialog();
   const { refresh } = useOverview();
   const lv = f.level ? LEVELS[f.level] : null;
   const correct = async () => {
-    const v = prompt(`${f.floor}階の人数を、実際の人数に直します`, String(f.count));
+    const v = await dialog.prompt(`${f.floor}階の人数を、実際の人数に直します`, String(f.count));
     if (v === null) return;
     const n = parseInt(v, 10);
-    if (Number.isNaN(n) || n < 0) return alert("0 以上の整数を入力してください");
-    try { await api.setFloorCount(f.floor, n); refresh(); } catch (e) { alert((e as Error).message); }
+    if (Number.isNaN(n) || n < 0) return dialog.alert("0 以上の整数を入力してください");
+    try { await api.setFloorCount(f.floor, n); refresh(); } catch (e) { dialog.alert((e as Error).message); }
   };
   return (
     <section className="mb-8">

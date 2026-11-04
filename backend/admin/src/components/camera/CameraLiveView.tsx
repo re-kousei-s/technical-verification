@@ -17,6 +17,7 @@ export function CameraLiveView({ cameraId }: { cameraId: string }) {
   const wrap = useRef<HTMLDivElement>(null);
   const [realtime, setRealtime] = useState(false); // リアルタイム（高い fps）を見ているか。見ていない間は、低い fps の表示
   const [showBoxes, setShowBoxes] = useState(true);
+  const [showVectors, setShowVectors] = useState(false); // 足元の動きのベクトルと、スコアを出すか
   const [box, setBox] = useState({ w: 0, h: 0 });
 
   const live = useCameraLive(cameraId, canvas, realtime ? "live" : "thumb");
@@ -54,6 +55,9 @@ export function CameraLiveView({ cameraId }: { cameraId: string }) {
           <>
             <label className="flex items-center gap-1.5 text-xs text-sub">
               <input type="checkbox" checked={showBoxes} onChange={(e) => setShowBoxes(e.target.checked)} /> 認識結果（枠）を重ねる
+            </label>
+            <label className="flex items-center gap-1.5 text-xs text-sub" title="足元の点と、進む向き・速さ（矢印）と、線ごとのスコアを出す">
+              <input type="checkbox" checked={showVectors} onChange={(e) => setShowVectors(e.target.checked)} /> ベクトル・スコアを重ねる
             </label>
             <Button variant={realtime ? "outlined" : "filled"} onClick={toggleRealtime}>
               {realtime ? "リアルタイムを停止" : `リアルタイム（${live.info?.requested_fps ?? 15}fps）`}
@@ -101,6 +105,7 @@ export function CameraLiveView({ cameraId }: { cameraId: string }) {
             <LineOverlay
               lines={lines} width={box.w} height={box.h}
               boxes={showBoxes && !result?.stale ? result?.boxes : undefined}
+              vectors={showVectors && !result?.stale && !editor.draft ? result?.vectors : undefined}
               edit={editor.draft ? { selected: editor.selected, onSelect: editor.setSelected, onChange: editor.setLine } : undefined}
             />
           )}
