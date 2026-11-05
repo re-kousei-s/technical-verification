@@ -51,7 +51,7 @@ services:
       DATABASE_URL: postgresql://hdt:hdt@postgres:5432/hdt
       REDIS_URL: redis://redis:6379/0
       CAMERAS_PATH: /config/cameras.yaml
-      PARTITIONS: "4"          # キューの分割数＝worker を増やせる上限。端末は、いちばん端末の少ない分割に、固定で振られる。worker は、分割を、自動で分け合う
+      PARTITIONS: "30"         # キューの分割数＝worker を増やせる上限。端末は、いちばん端末の少ない分割に、固定で振られる。worker は、分割を、自動で分け合う
       MAX_QUEUE: "200"         # キューの上限（超えたら新しいフレームを捨てる）
     volumes:
       - ./config:/config:ro
@@ -74,14 +74,15 @@ services:
     image: hdt-worker-mediapipe
     profiles: ["live"]
     # worker の台数。増やすときは、`docker compose --profile live up -d --scale worker=4`（分割数 PARTITIONS が上限）。分割は、自動で分け合う
-    deploy: {replicas: 2}
-    cpus: 2
-    mem_limit: 4g
+    deploy: {replicas: 30}   # 1 端末に 1 worker を割り当てられる台数（1 コア・1 スレッドの worker を、数で稼ぐ。コアが足りなければ、取り合って、全体が少し遅くなる）
+    cpus: 1
+    mem_limit: 1g
     environment: &worker-env
       <<: *env
       CONFIG: /config/matrix.yaml
       CAMERAS: /config/cameras.yaml
       MODELS_DIR: /models
+      ORT_THREADS: "1"                        # 推論のスレッド数（1 コアの worker なので 1。1 スレッド × 多数のほうが、2 スレッドより、コアあたりの効率が良い）
       DETECTOR: yolox_tiny_416                # YOLOX-tiny（ONNX、Apache-2.0、入力 416）。人が大量にいても、Lite0 より強い。精度優先なら yolox_s_640、最軽量なら efficientdet_lite0_int8
       # WORKER_NAME は、指定しない（台数を増やしても、名前が重ならないよう、コンテナ名になる）。WORKER_PARTITIONS も、指定しない（自動で分け合う）
     volumes: &worker-volumes
