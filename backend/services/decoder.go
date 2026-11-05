@@ -35,9 +35,11 @@ var ffmpegArgs = []string{
 	"-hide_banner", "-loglevel", "error",
 	"-flags", "low_delay",
 	"-probesize", "32768", "-analyzeduration", "1", "-fpsprobesize", "0",
+	"-threads", "1", // デコードのスレッドは 1 つ（端末が多いとき、ffmpeg 同士のコアの取り合いを減らす）
 	"-f", "h264", "-i", "pipe:0", // 入力: 標準入力の H.264（Annex B）
 	"-fps_mode", "passthrough",
-	"-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "5", "pipe:1", // 出力: JPEG を標準出力へ
+	"-threads", "1",
+	"-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "7", "pipe:1", // 出力: JPEG を標準出力へ（品質 7：5 より小さく、軽い。検出には十分）
 }
 
 // NewDecoder は、ffmpeg を起動する。
