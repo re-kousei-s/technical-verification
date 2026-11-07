@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -202,6 +203,12 @@ func (a *AdminController) liveWS(c echo.Context) error {
 		return nil
 	}
 	defer cancel()
+	// 視聴の開始と終了を記録する（「見ていないのに、高い fps のまま」のとき、残っている接続を、探せるように）
+	start := time.Now()
+	log.Printf("映像の視聴を開始 %s thumb=%v 接続元=%s", id, thumb, c.RealIP())
+	defer func() {
+		log.Printf("映像の視聴を終了 %s thumb=%v 接続元=%s（%.0f 秒）", id, thumb, c.RealIP(), time.Since(start).Seconds())
+	}()
 
 	// 管理画面側が閉じたかを知るため、読み続ける（届くメッセージは使わない）
 	closed := make(chan struct{})
