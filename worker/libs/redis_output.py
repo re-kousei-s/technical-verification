@@ -24,18 +24,16 @@ class RedisOutput:
         self._last_image_at = {}  # 端末ID → 画像を最後に出した時刻
         self._recent_events = {}  # 端末ID → 最近の通過（最大 5 件）
 
-    def publish_result(self, camera_id, ts_ms, w, h, tracked, new_events, infer_ms, lag_ms, vectors=None):
+    def publish_result(self, camera_id, ts_ms, w, h, tracks, new_events, infer_ms, lag_ms, vectors=None):
         """最新の認識結果を出す。枠の座標は「画面に対する割合」（0〜1）にしてある。"""
         recent = self._recent_events.setdefault(camera_id, deque(maxlen=5))
         for e in new_events:
             recent.append({"ts_ms": ts_ms, "dir": e[1], "id": e[2], "line": e[5]})
 
-        boxes = []  # [x1, y1, x2, y2, 追跡ID, スコア]
-        if len(tracked):
-            scale = np.array([w, h, w, h], dtype=np.float32)
-            for xyxy, tid, conf in zip(tracked.xyxy / scale, tracked.tracker_id, tracked.confidence):
-                if conf >= RESULT_MIN_SCORE:
-                    boxes.append([round(float(v), 4) for v in xyxy] + [int(tid), round(float(conf), 2)])
+        boxes = []  # [x1, y1, x2, y2, 追跡ID, スコア]（座標は割合）。tracks は [[追跡ID, x1, y1, x2, y2, スコア], ...]
+        for tid, x1, y1, x2, y2, conf in tracks:
+            if conf >= RESULT_MIN_SCORE:
+                boxes.append([round(x1 / w, 4), round(y1 / h, 4), round(x2 / w, 4), round(y2 / h, 4), int(tid), round(float(conf), 2)])
 
         self.r.set(f"result:{camera_id}", json.dumps({
             "ts_ms": ts_ms, "published_ms": now_ms(), "w": w, "h": h, "boxes": boxes,

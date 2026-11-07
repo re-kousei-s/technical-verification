@@ -15,7 +15,7 @@ log = logging.getLogger("worker")
 class QueueConsumer:
     def __init__(self, rdb, handler, heartbeat, stats):
         self.r = rdb
-        self.handler = handler  # 1 エントリを処理する関数
+        self.handler = handler  # 1 エントリを処理する関数 handler(fields, stream)
         self.heartbeat = heartbeat  # 生きていることを知らせる関数
         self.stats = stats
         self._stop = False
@@ -112,7 +112,7 @@ class QueueConsumer:
     def _process(self, stream, entry_id, fields):
         """1 エントリを処理し、終わったら ACK して消す。"""
         try:
-            self.handler(fields)
+            self.handler(fields, stream)  # stream は、どの分割から読んだか（追跡の結果を、同じ番号のストリームへ流すため）
         except Exception:
             # 1 フレームの失敗で止めない。やり直すと追跡の状態が二重に進むので、失敗したものも ACK して捨てる
             self.stats.errors += 1

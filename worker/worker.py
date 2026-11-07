@@ -1,17 +1,17 @@
-"""worker：キューからフレームを取り出して人を認識し、結果を DB に書く（Python）。
+"""worker（検出 + 追跡）：キューからフレームを取り出して、人を検出・追跡し、追跡の結果を、判定の service へ流す（Python）。
 
-  バックエンド（Go）が積んだ JPEG ─▶ 検出 ─▶ 追跡 ─▶ 線 / ゲートで通過を判定 ─▶ PostgreSQL
+  バックエンド（Go）が積んだ JPEG ─▶ 検出 ─▶ 追跡 ─▶ Redis（tracks:p…）─▶ judge.py（線を越えたかの判定・DB）
 
+画像を見るのは、ここまで。線を越えたかの判定は、judge.py（画像を見ない、2 次元の幾何だけ）が行う。
 このファイルは、部品を組み立てて動かすだけ。中身は libs/ に分けてある。
   libs/settings.py         環境変数・定数
   libs/queue_consumer.py   キューの読み取りと ACK
-  libs/frame_processor.py  1 フレームの処理（検出 → 追跡 → 判定 → 保存 → 出力）
-  libs/camera_registry.py  端末の設定と、追跡の状態
-  libs/database.py         DB への書き込み
-  libs/redis_output.py     Redis への出力（認識結果・画像・ハートビート）
+  libs/frame_processor.py  1 フレームの処理（検出 → 追跡 → 追跡の結果を流す）
+  libs/camera_registry.py  端末の設定と、追跡・判定の状態
+  libs/redis_output.py     Redis への出力（画像・ハートビート）
   libs/annotator.py        検出枠つきの画像を描く
   libs/stats.py            処理件数・時間の集計
-追跡・線・ゲートの計算は aggregator/、検出器は common/ にある。
+追跡は aggregator/tracking.py、判定は aggregator/judge.py、検出器は common/ にある。
 """
 
 import logging
@@ -21,7 +21,6 @@ import redis
 
 from common.detectors import make_detector
 from libs.camera_registry import CameraRegistry
-from libs.database import ResultWriter
 from libs.frame_processor import FrameProcessor
 from libs.queue_consumer import QueueConsumer
 from libs.redis_output import RedisOutput
@@ -40,11 +39,10 @@ def main():
     registry = CameraRegistry()
     log.info("検出器を読み込み中: %s", DETECTOR)
     detector = make_detector(DETECTOR, registry.min_score)
-    writer = ResultWriter()
     output = RedisOutput(rdb, stats)
 
     # 1 フレームの処理と、キューの読み取りを組み合わせる
-    processor = FrameProcessor(registry, detector, writer, output, stats)
+    processor = FrameProcessor(registry, detector, rdb, output, stats)
     consumer = QueueConsumer(rdb, processor.handle, output.heartbeat, stats)
 
     # 停止の合図（docker stop など）を受けたら、処理中のフレームを終えてから止まる

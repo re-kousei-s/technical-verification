@@ -1,10 +1,12 @@
-"""端末ごとの設定と、追跡の状態（トラッカー・線）を持つ。"""
+"""端末ごとの設定と、追跡・判定の状態を持つ。追跡は検出の worker が、判定は judge の service が使う。"""
 
 import json
 import logging
 import time
 
-from aggregator.counter import CameraCounter
+from aggregator.judge import Judge
+from aggregator.lifecycle import Lifecycle
+from aggregator.tracking import Tracker
 from common.live import load_cameras, load_yaml
 from common.tiling import make_tiles
 from libs.settings import CAMERAS_RELOAD_S, MATRIX
@@ -26,7 +28,8 @@ class CameraRegistry:
         self.trackers = {t["name"]: t for t in self.agg["trackers"]}  # トラッカー設定を名前で引く
         self.cameras = load_cameras()
         self._loaded_at = time.time()
-        self._state = {}  # 端末ID → (CameraCounter, 設定の署名, タイル)
+        self._tracker = {}  # 端末ID → (追跡, 設定の署名, タイル)
+        self._judge = {}  # 端末ID → (判定, 設定の署名)
 
     def get(self, camera_id):
         """端末の設定。未登録なら None。変更を拾うため、数秒ごとに設定を読み直す。"""
@@ -39,26 +42,40 @@ class CameraRegistry:
         return self.cameras[camera_id]
 
     @staticmethod
-    def _signature(cam, w, h):
+    def _tracker_signature(cam, w, h):
         """追跡を作り直すべきかを判断するための、設定の「印」。これが変わったら作り直す。"""
-        return (json.dumps(cam["lines"]), cam["anchor"], cam["tracker"],
-                float(cam["sample_fps"]), cam.get("tiling"), w, h)
+        return (cam["tracker"], float(cam["sample_fps"]), cam.get("tiling"), json.dumps(cam["lines"][:1]), w, h)
 
-    def trackers_for(self, camera_id, w, h):
-        """端末の (追跡＋線の判定, 検出のタイル分割) を返す。無ければ作る。"""
+    @staticmethod
+    def _judge_signature(cam, w, h):
+        return (json.dumps(cam["lines"]), cam["anchor"], float(cam["sample_fps"]), w, h)
+
+    def tracker_for(self, camera_id, w, h):
+        """端末の (追跡, 検出のタイル分割, 人の状態管理) を返す。無ければ作る。（検出 + 追跡の worker が使う）"""
         cam = self.cameras[camera_id]
-        sig = self._signature(cam, w, h)
-        state = self._state.get(camera_id)
+        sig = self._tracker_signature(cam, w, h)
+        state = self._tracker.get(camera_id)
         if state is None or state[1] != sig:
             if state is not None:
                 log.info("設定が変わったので追跡を作り直す: %s", camera_id)
-            counter = CameraCounter(
-                cam["lines"], w, h, self.trackers[cam["tracker"]], float(cam["sample_fps"]),
-                cam["anchor"], self.agg.get("min_crossing_seconds", 0.0), self.agg.get("edge_margin", 0.0),
-                self.agg.get("edge_confirm_seconds", 1.5),
-                self.agg.get("method", "line"), self.agg.get("heading"),
-            )
+            tracker = Tracker(self.trackers[cam["tracker"]], float(cam["sample_fps"]))
             # 分割して検出する設定（tiling: line）のときだけ、1 本目の線の周りを切り出す
             tiles = make_tiles(w, h, cam.get("tiling", "none"), cam["lines"][0]["line"])
-            state = self._state[camera_id] = (counter, sig, tiles)
-        return state[0], state[2]
+            # 人の状態管理（starting → moving → deleted）。追跡と一緒に作り直す（追跡 ID が振り直しになるため）
+            lifecycle = Lifecycle(float(cam["sample_fps"]), (w, h), **(self.agg.get("episode") or {}))
+            state = self._tracker[camera_id] = (tracker, sig, tiles, lifecycle)
+        return state[0], state[2], state[3]
+
+    def judge_for(self, camera_id, w, h):
+        """端末の判定を返す。無ければ作る。線・fps が変わったら作り直す（判定の状態は、リセットされる）。（judge の service が使う）"""
+        cam = self.cameras[camera_id]
+        sig = self._judge_signature(cam, w, h)
+        state = self._judge.get(camera_id)
+        if state is None or state[1] != sig:
+            if state is not None:
+                log.info("線が変わったので判定を作り直す: %s", camera_id)
+            method = self.agg.get("method", "episode")
+            params = self.agg.get("episode")
+            judge = Judge(cam["lines"], w, h, float(cam["sample_fps"]), method, params, cam["anchor"])
+            state = self._judge[camera_id] = (judge, sig)
+        return state[0]

@@ -26,6 +26,14 @@ def stream_name(partition):
     return f"frames:p{partition}"
 
 
+def tracks_stream(frames_stream):
+    """検出 + 追跡の worker が、追跡の結果を流すストリーム。フレームのストリームと、同じ分割の番号（frames:p3 → tracks:p3）"""
+    return frames_stream.replace("frames:", "tracks:", 1)
+
+
+JUDGE_GROUP = "judges"  # 判定の service が、追跡の結果を読むためのコンシューマーグループ
+
+
 def partition_of(camera_id, n=None):
     """カメラを特定のパーティション（= 特定の worker）に固定する。トラッカーはカメラごとに状態を持つため。"""
     n = n or PARTITIONS

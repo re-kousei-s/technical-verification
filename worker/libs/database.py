@@ -33,7 +33,7 @@ class ResultWriter:
     def __init__(self):
         self.db = connect_db()
 
-    def write(self, camera_id, cam, ts_ms, w, h, events, n_dets, n_tracks, infer_ms, lag_ms):
+    def write(self, camera_id, cam, ts_ms, w, h, events, n_dets, n_tracks, infer_ms, lag_ms, model=None):
         """events は (時刻, "in"/"out", 追跡ID, x, y, 線の名前) のリスト。"""
         floor = cam.get("floor")
         ts = ts_iso(ts_ms)
@@ -50,7 +50,7 @@ class ResultWriter:
                     self._update_camera_state(cur, camera_id, floor, d_in, d_out, ts, n_dets, n_tracks, w, h)
                     cur.execute(
                         "INSERT INTO frame_log (camera_id, ts, n_dets, infer_ms, lag_ms, model) VALUES (%s, %s, %s, %s, %s, %s)",
-                        (camera_id, ts, n_dets, infer_ms, lag_ms, DETECTOR),
+                        (camera_id, ts, n_dets, infer_ms, lag_ms, model or DETECTOR),
                     )
                 self.db.commit()
                 return

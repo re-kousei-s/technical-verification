@@ -13,6 +13,7 @@
 services:
   redis:
     networks: [hdt]
+    restart: unless-stopped   # PC を再起動しても、docker が起動したら、自動で立ち上がる（`docker compose stop` で止めたものは、止まったまま）
     image: redis:7-alpine
     profiles: ["live", "live-rfdetr"]
     command: ["redis-server", "--save", "", "--appendonly", "no"]   # キューは揮発でよい（検証用）
@@ -20,6 +21,7 @@ services:
 
   postgres:
     networks: [hdt]
+    restart: unless-stopped   # PC を再起動しても、docker が起動したら、自動で立ち上がる（`docker compose stop` で止めたものは、止まったまま）
     image: postgres:16-alpine
     profiles: ["live", "live-rfdetr"]
     environment:
@@ -44,6 +46,7 @@ services:
 
   backend:
     networks: [hdt]
+    restart: unless-stopped   # PC を再起動しても、docker が起動したら、自動で立ち上がる（`docker compose stop` で止めたものは、止まったまま）
     build: {context: ./backend}
     image: hdt-backend
     profiles: ["live", "live-rfdetr"]
@@ -62,6 +65,7 @@ services:
   # スマホ・管理画面用の HTTPS の入口（自己署名の証明書）。 8000（=8443）→ backend:8000 / 8080（=8444）→ backend:8080
   gateway:
     networks: [hdt]
+    restart: unless-stopped   # PC を再起動しても、docker が起動したら、自動で立ち上がる（`docker compose stop` で止めたものは、止まったまま）
     build: {context: ./backend/gateway}
     image: hdt-gateway
     profiles: ["live", "live-rfdetr"]
@@ -70,6 +74,7 @@ services:
 
   worker:
     networks: [hdt]
+    restart: unless-stopped   # PC を再起動しても、docker が起動したら、自動で立ち上がる（`docker compose stop` で止めたものは、止まったまま）
     build: {context: ., dockerfile: worker/Dockerfile, args: {BACKEND: mediapipe}}
     image: hdt-worker-mediapipe
     profiles: ["live"]
@@ -96,9 +101,31 @@ services:
       redis: {condition: service_healthy}
       db-init: {condition: service_completed_successfully}
 
+  # 判定（画像を見ない）：worker（検出 + 追跡）が流した追跡の結果を読んで、線を越えたか（IN/OUT）を決め、DB と画面用の結果に書く。
+  # 軽いので、1 つで、全部の分割を読む（名前を固定して、再起動しても、前回 ACK していない分を引き継ぐ）
+  judge:
+    networks: [hdt]
+    image: hdt-worker-mediapipe
+    command: ["python", "judge.py"]
+    profiles: ["live", "live-rfdetr"]
+    cpus: 1
+    mem_limit: 1g
+    environment: *worker-env
+    volumes:
+      - ./config:/config:ro
+      - ./worker/common:/app/common:ro
+      - ./worker/aggregator:/app/aggregator:ro
+      - ./worker/libs:/app/libs:ro
+      - ./worker/judge.py:/app/judge.py:ro
+    depends_on:
+      redis: {condition: service_healthy}
+      db-init: {condition: service_completed_successfully}
+    restart: unless-stopped
+
   # RF-DETR で認識する版。`worker` と同じキューを取り合うので、どちらか一方だけ動かす
   worker-rfdetr:
     networks: [hdt]
+    restart: unless-stopped   # PC を再起動しても、docker が起動したら、自動で立ち上がる（`docker compose stop` で止めたものは、止まったまま）
     build: {context: ., dockerfile: worker/Dockerfile, args: {BACKEND: rfdetr}}
     image: hdt-worker-rfdetr
     profiles: ["live-rfdetr"]
