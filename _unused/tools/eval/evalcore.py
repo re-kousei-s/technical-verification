@@ -26,13 +26,13 @@ def messages(d, frames):
     return out
 
 
-def run(d, frames, lines, anchor="bottom_center", edge=0.0, confirm=1.5, tracker_over=None, min_cross=0.0, method="line", heading=None):
+def run(d, frames, lines, anchor="bottom_center", edge=0.0, confirm=1.5, tracker_over=None, min_cross=0.0, method="line", heading=None, pad=0):
     """lines: [{"id","name","line":[[x,y],[x,y]]}]。戻り値: (events, tracks)。events = [(秒, 向き, 追跡ID, 線の名前)]"""
     trk = json.loads(json.dumps(TRACKERS["lowfps"]))
     trk["params"].update(tracker_over or {})
     c = CameraCounter(lines, d["w"], d["h"], trk, d["fps"], anchor, min_cross, edge, confirm, method, heading)
     tracks = {}
-    for k, m in enumerate(messages(d, frames)):
+    for k, m in enumerate(messages(d, list(frames) + [[] for _ in range(pad)])):  # pad：映像が終わったあとも、検出なしのフレームが続く、と見なす（確定の猶予を、流すため）
         tr = c.process(m)
         for i in range(len(tr)):
             tid = int(tr.tracker_id[i])

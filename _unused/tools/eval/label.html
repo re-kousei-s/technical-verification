@@ -1,0 +1,360 @@
+<title>通過ラベル付け</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  /* レイアウト：左に映像と操作、右にラベルの一覧と書き出し。狭いときは縦に積む */
+  :root {
+    --bg: #f4f5f6;
+    --panel: #ffffff;
+    --fg: #1d2227;
+    --sub: #5d6872;
+    --line: #d6dbe0;
+    --accent: #0b5cad;
+    --in: #11805b;
+    --out: #c2410c;
+    --l1: #d92d20;
+    --l2: #c28a00;
+    --stage: #0c0f12;
+    --font: "IBM Plex Sans JP", system-ui, -apple-system, "Hiragino Sans", "Yu Gothic UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #101316; --panel: #181c20; --fg: #e6e9ec; --sub: #98a2ac; --line: #2d343b;
+      --accent: #6cb0f5; --in: #3ccf9b; --out: #ff9b61; --l1: #ff6b5e; --l2: #f0be3c; --stage: #050607;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #101316; --panel: #181c20; --fg: #e6e9ec; --sub: #98a2ac; --line: #2d343b;
+    --accent: #6cb0f5; --in: #3ccf9b; --out: #ff9b61; --l1: #ff6b5e; --l2: #f0be3c; --stage: #050607;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 14px; line-height: 1.55;
+    padding-block: 16px 32px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  h1 { font-size: 18px; font-weight: 600; margin: 0 0 2px; text-wrap: balance; }
+  .lead { color: var(--sub); margin: 0 0 14px; max-width: 70ch; }
+  .app { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
+  @media (max-width: 900px) { .app { grid-template-columns: minmax(0, 1fr); } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; min-width: 0; }
+  .stage { position: relative; background: var(--stage); border-radius: 6px; overflow: hidden; aspect-ratio: 16 / 9; max-width: 100%; }
+  .stage video, .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .stage video { object-fit: contain; }
+  .stage canvas { cursor: crosshair; }
+  .empty { position: absolute; inset: 0; display: grid; place-items: center; color: #aab3bb; text-align: center; padding: 16px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+  button, .filebtn {
+    font: inherit; font-size: 13px; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+    padding: 6px 10px; cursor: pointer; min-height: 34px;
+  }
+  button:hover, .filebtn:hover { border-color: var(--accent); }
+  button:focus-visible, .filebtn:focus-within, textarea:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--panel)); }
+  .mark { font-weight: 600; min-width: 108px; }
+  .mark.in { color: var(--in); border-color: var(--in); }
+  .mark.out { color: var(--out); border-color: var(--out); }
+  .filebtn input { display: none; }
+  .time { font-family: var(--mono); font-size: 13px; color: var(--sub); }
+  .seek { width: 100%; margin-top: 10px; accent-color: var(--accent); }
+  .ticks { position: relative; height: 16px; margin-top: 2px; }
+  .tick { position: absolute; top: 0; width: 3px; height: 16px; border-radius: 1px; transform: translateX(-1px); }
+  .tick.in { background: var(--in); }
+  .tick.out { background: var(--out); }
+  .keys { color: var(--sub); font-size: 12px; margin-top: 10px; }
+  kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--bg); color: var(--fg); }
+  .counts { display: flex; gap: 14px; font-family: var(--mono); font-size: 13px; margin-bottom: 8px; }
+  .counts .i { color: var(--in); } .counts .o { color: var(--out); }
+  .list { max-height: 330px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; }
+  .row { display: grid; grid-template-columns: 56px 52px 44px 1fr auto; gap: 6px; align-items: center; padding: 5px 8px; border-bottom: 1px solid var(--line); cursor: pointer; font-size: 13px; }
+  .row:last-child { border-bottom: 0; }
+  .row:hover { background: var(--bg); }
+  .row.sel { background: color-mix(in srgb, var(--accent) 16%, var(--panel)); outline: 1px solid var(--accent); }
+  .row.nopos .p { color: var(--out); }
+  .row .t { font-family: var(--mono); }
+  .row .d.in { color: var(--in); font-weight: 600; } .row .d.out { color: var(--out); font-weight: 600; }
+  .row button { min-height: 26px; padding: 0 8px; font-size: 12px; }
+  .none { color: var(--sub); padding: 12px; }
+  textarea { width: 100%; min-height: 130px; margin-top: 8px; font-family: var(--mono); font-size: 12px; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; resize: vertical; }
+  .side { display: grid; gap: 16px; }
+  .crow { display: grid; grid-template-columns: 52px 44px 44px 30px 1fr; gap: 6px; align-items: center; padding: 5px 8px; border-bottom: 1px solid var(--line); cursor: pointer; font-size: 13px; }
+  .crow:last-child { border-bottom: 0; } .crow:hover { background: var(--bg); } .crow.sel { background: color-mix(in srgb, var(--accent) 16%, var(--panel)); outline: 1px solid var(--accent); }
+  .crow .t { font-family: var(--mono); } .crow.ok { opacity: .55; } .crow.no { opacity: .4; text-decoration: line-through; }
+  .crow .btns { display: flex; gap: 4px; justify-content: flex-end; } .crow button { min-height: 26px; padding: 0 8px; font-size: 12px; }
+  .crow button.yes { color: var(--in); border-color: var(--in); } .crow button.no { color: var(--out); border-color: var(--out); }
+  h2 { font-size: 13px; font-weight: 600; margin: 0 0 8px; color: var(--sub); letter-spacing: .04em; }
+  .msg { color: var(--sub); font-size: 12px; min-height: 18px; margin-top: 6px; }
+  .legend { display: flex; gap: 12px; font-size: 12px; color: var(--sub); flex-wrap: wrap; margin-top: 8px; }
+  .legend i { display: inline-block; width: 18px; height: 3px; vertical-align: middle; margin-right: 4px; border-radius: 2px; }
+</style>
+
+<h1>通過ラベル付け</h1>
+<p class="lead">動画を再生して、人が扉の線を越えた瞬間に、IN か OUT を記録します。IN は線の矢印が指す向き（扉から廊下へ出る）、OUT はその逆（扉へ入る）。記録した結果は、右下の欄からコピーして、チャットに貼ってください。</p>
+
+<div class="app">
+  <div class="panel">
+    <div class="stage" id="stage">
+      <video id="video" playsinline muted preload="auto"></video>
+      <canvas id="cv"></canvas>
+      <div class="empty" id="empty">動画ファイルを選んでください（手元の mp4）</div>
+    </div>
+
+    <input class="seek" id="seek" type="range" min="0" max="1000" value="0" step="1" aria-label="再生位置">
+    <div class="ticks" id="ticks" aria-hidden="true"></div>
+
+    <div class="bar">
+      <label class="filebtn">動画を選ぶ<input id="file" type="file" accept="video/*"></label>
+      <button id="play" type="button">▶ 再生</button>
+      <button id="back1s" type="button" title="J">−1 秒</button>
+      <button id="back1f" type="button" title="←">−1 コマ</button>
+      <button id="fwd1f" type="button" title="→">＋1 コマ</button>
+      <button id="fwd1s" type="button" title="L">＋1 秒</button>
+      <span class="time" id="time">0.000 / 0.000 s</span>
+    </div>
+    <div class="bar">
+      <span class="time">速度</span>
+      <button type="button" class="rate" data-r="0.25">0.25×</button>
+      <button type="button" class="rate" data-r="0.5">0.5×</button>
+      <button type="button" class="rate on" data-r="1">1×</button>
+      <span class="time" style="margin-left:8px">線</span>
+      <button type="button" class="ln on" data-l="0" style="color:var(--l1)">線1 (1)</button>
+      <button type="button" class="ln" data-l="1" style="color:var(--l2)">線2 (2)</button>
+    </div>
+    <div class="bar">
+      <button type="button" class="mark in" id="markIn">IN を記録 (I)</button>
+      <button type="button" class="mark out" id="markOut">OUT を記録 (O)</button>
+      <button type="button" id="undo">直前を消す (Backspace)</button>
+    </div>
+    <div class="keys">
+      <kbd>Space</kbd> 再生/停止　<kbd>←</kbd><kbd>→</kbd> 1 コマ　<kbd>J</kbd><kbd>L</kbd> ±1 秒　<kbd>1</kbd><kbd>2</kbd> 線の切替　<kbd>I</kbd><kbd>O</kbd> 記録。
+      記録するとき、<b>映像の上で、越えた人の足元にマウスを置いておく</b>と、その位置も一緒に残ります（置かなくても記録できます）。
+      <br><b>あとから位置を付ける：</b>「貼った内容を読み込む」で、前回の結果を読み込むと、位置なしの最初の記録が選ばれます。映像の上で、<b>越えた人の足元をクリック</b>すると、次の位置なしへ進みます。
+    </div>
+    <div class="legend"><span><i style="background:var(--l1)"></i>線1</span><span><i style="background:var(--l2)"></i>線2</span><span>線の上の矢印＝IN の向き</span></div>
+  </div>
+
+  <div class="side">
+    <div class="panel">
+      <h2>記録した通過</h2>
+      <div class="counts"><span class="i" id="cIn">IN 0</span><span class="o" id="cOut">OUT 0</span><span id="cAll" style="color:var(--sub)">計 0</span></div>
+      <div class="list" id="list"></div>
+    </div>
+    <div class="panel">
+      <h2>数えすぎの候補を確認</h2>
+      <div class="msg" id="cmsg" style="margin:0 0 6px">システムが数えたが、正解に無い通過です。行を押すと、その時刻に飛んで、数えた位置に、輪が出ます。越えて止まった人など、<b>本物の通過なら「○」</b>（正解に足します）、違えば「×」。</div>
+      <div class="list" id="clist" style="max-height:300px"></div>
+    </div>
+    <div class="panel">
+      <h2>書き出し（コピーして貼る）</h2>
+      <button type="button" id="copy">結果をコピー</button>
+      <button type="button" id="load">貼った内容を読み込む</button>
+      <textarea id="json" spellcheck="false" aria-label="ラベルの JSON"></textarea>
+      <div class="msg" id="msg"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // 線（画面に対する割合）。IN の向きは、始点→終点に対して画面の左側（本番の判定と同じ）
+  const LINES = [
+    { name: "線1", p: [[0.5555, 0.5068], [0.1397, 1.0]], color: "--l1" },
+    { name: "線2", p: [[0.6522, 0.4482], [0.5873, 0.5377]], color: "--l2" },
+  ];
+  const $ = (id) => document.getElementById(id);
+  const video = $("video"), cv = $("cv"), g = cv.getContext("2d");
+  const FPS = 30;
+  let events = [];          // {t, line, dir, x, y}
+  let line = 0;             // いま選んでいる線
+  let hover = null;         // 映像の上のマウス位置（割合）
+  let sel = null;           // 位置を付けるために選んでいる記録
+  const CANDS = [{"t": 1.7, "dir": "in", "line": "線1", "x": 0.479, "y": 0.652, "n": 2}, {"t": 3.3, "dir": "out", "line": "線1", "x": 0.247, "y": 0.744, "n": 3}, {"t": 7.7, "dir": "in", "line": "線1", "x": 0.493, "y": 0.996, "n": 1}, {"t": 8.7, "dir": "out", "line": "線2", "x": 0.646, "y": 0.382, "n": 1}, {"t": 9.3, "dir": "out", "line": "線1", "x": 0.254, "y": 0.877, "n": 2}, {"t": 11.0, "dir": "in", "line": "線2", "x": 0.68, "y": 1.0, "n": 2}, {"t": 12.0, "dir": "in", "line": "線1", "x": 0.525, "y": 0.992, "n": 2}, {"t": 15.3, "dir": "in", "line": "線2", "x": 0.787, "y": 0.735, "n": 1}, {"t": 16.7, "dir": "out", "line": "線1", "x": 0.61, "y": 0.517, "n": 1}, {"t": 21.7, "dir": "out", "line": "線1", "x": 0.446, "y": 0.415, "n": 1}, {"t": 24.3, "dir": "out", "line": "線2", "x": 0.615, "y": 0.45, "n": 3}, {"t": 25.3, "dir": "in", "line": "線2", "x": 0.677, "y": 0.518, "n": 1}, {"t": 27.2, "dir": "in", "line": "線1", "x": 0.479, "y": 0.826, "n": 2}, {"t": 27.3, "dir": "out", "line": "線1", "x": 0.472, "y": 0.512, "n": 2}, {"t": 29.0, "dir": "in", "line": "線2", "x": 0.689, "y": 1.0, "n": 1}, {"t": 29.0, "dir": "out", "line": "線2", "x": 0.563, "y": 0.521, "n": 2}, {"t": 46.3, "dir": "out", "line": "線1", "x": 0.613, "y": 0.532, "n": 3}, {"t": 49.0, "dir": "out", "line": "線2", "x": 0.639, "y": 0.431, "n": 1}, {"t": 50.7, "dir": "in", "line": "線1", "x": 0.515, "y": 0.648, "n": 3}, {"t": 50.8, "dir": "out", "line": "線1", "x": 0.392, "y": 0.623, "n": 4}, {"t": 63.0, "dir": "in", "line": "線1", "x": 0.763, "y": 0.785, "n": 1}, {"t": 65.0, "dir": "out", "line": "線1", "x": 0.604, "y": 0.509, "n": 1}, {"t": 67.7, "dir": "in", "line": "線1", "x": 0.668, "y": 0.649, "n": 3}, {"t": 69.0, "dir": "out", "line": "線2", "x": 0.613, "y": 0.351, "n": 1}, {"t": 72.3, "dir": "out", "line": "線2", "x": 0.58, "y": 0.479, "n": 1}, {"t": 72.4, "dir": "in", "line": "線2", "x": 0.615, "y": 0.615, "n": 3}];   // 数えすぎの候補（t 秒・向き・線・位置・数えた入力の数 n）
+  let cst = {};             // 候補の判定 {番号: "ok"|"no"}
+  let selC = null;          // 選んでいる候補の番号
+  let fileKey = "";
+
+  const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "#888";
+  const fmt = (t) => (isFinite(t) ? t : 0).toFixed(3);
+  const store = {
+    get() { try { return JSON.parse(localStorage.getItem("labels:" + fileKey) || "null"); } catch { return null; } },
+    set(v) { try { localStorage.setItem("labels:" + fileKey, JSON.stringify(v)); } catch { /* 保存できなくても、使える */ } },
+  };
+
+  // 映像の描画範囲（object-fit: contain の内側）
+  function box() {
+    const W = cv.clientWidth, H = cv.clientHeight, vw = video.videoWidth || 16, vh = video.videoHeight || 9;
+    const s = Math.min(W / vw, H / vh), w = vw * s, h = vh * s;
+    return { x: (W - w) / 2, y: (H - h) / 2, w, h };
+  }
+  function draw() {
+    const dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+    if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
+    g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+    const b = box();
+    LINES.forEach((L, i) => {
+      const a = [b.x + L.p[0][0] * b.w, b.y + L.p[0][1] * b.h], z = [b.x + L.p[1][0] * b.w, b.y + L.p[1][1] * b.h];
+      g.strokeStyle = css(L.color); g.lineWidth = i === line ? 4 : 2; g.globalAlpha = i === line ? 1 : 0.65;
+      g.beginPath(); g.moveTo(...a); g.lineTo(...z); g.stroke(); g.globalAlpha = 1;
+      // IN の向きの矢印（本番と同じ向き：始点→終点のベクトル (dx,dy) に対して (dy, −dx)）
+      const dx = z[0] - a[0], dy = z[1] - a[1], len = Math.hypot(dx, dy) || 1, nx = dy / len, ny = -dx / len;
+      const m = [(a[0] + z[0]) / 2, (a[1] + z[1]) / 2], e = [m[0] + nx * 34, m[1] + ny * 34];
+      g.strokeStyle = css("--in"); g.fillStyle = css("--in"); g.lineWidth = 3;
+      g.beginPath(); g.moveTo(...m); g.lineTo(...e); g.stroke();
+      const ang = Math.atan2(ny, nx); g.beginPath(); g.moveTo(...e);
+      g.lineTo(e[0] - 10 * Math.cos(ang - 0.45), e[1] - 10 * Math.sin(ang - 0.45));
+      g.lineTo(e[0] - 10 * Math.cos(ang + 0.45), e[1] - 10 * Math.sin(ang + 0.45)); g.closePath(); g.fill();
+      g.font = "600 13px " + css("--font"); g.fillStyle = css(L.color); g.fillText(L.name, z[0] + 6, z[1] - 6);
+    });
+    // いまの時刻の前後 1 秒に記録がある場所を、印で出す
+    events.forEach((ev) => {
+      if (ev.x == null || (ev !== sel && Math.abs(ev.t - video.currentTime) > 1)) return;
+      const px = b.x + ev.x * b.w, py = b.y + ev.y * b.h;
+      g.strokeStyle = css(ev.dir === "in" ? "--in" : "--out"); g.lineWidth = 3;
+      g.beginPath(); g.arc(px, py, 9, 0, Math.PI * 2); g.stroke();
+    });
+    if (selC != null) {
+      const cd = CANDS[selC], px = b.x + cd.x * b.w, py = b.y + cd.y * b.h;
+      g.strokeStyle = css("--accent"); g.lineWidth = 3; g.setLineDash([6, 4]);
+      g.beginPath(); g.arc(px, py, 16, 0, Math.PI * 2); g.stroke(); g.setLineDash([]);
+    }
+    if (hover) {
+      g.strokeStyle = "#fff"; g.lineWidth = 1;
+      const px = b.x + hover.x * b.w, py = b.y + hover.y * b.h;
+      g.beginPath(); g.moveTo(px - 8, py); g.lineTo(px + 8, py); g.moveTo(px, py - 8); g.lineTo(px, py + 8); g.stroke();
+    }
+  }
+
+  function ui() {
+    const d = video.duration || 0, t = video.currentTime || 0;
+    $("time").textContent = fmt(t) + " / " + fmt(d) + " s";
+    if (d) $("seek").value = Math.round((t / d) * 1000);
+    $("play").textContent = video.paused ? "▶ 再生" : "⏸ 停止";
+    draw();
+  }
+  function renderList() {
+    const el = $("list");
+    el.innerHTML = "";
+    if (!events.length) { el.innerHTML = '<div class="none">まだありません。動画を再生して、I か O を押してください。</div>'; }
+    events.slice().sort((a, b) => a.t - b.t).forEach((ev) => {
+      const r = document.createElement("div"); r.className = "row" + (ev === sel ? " sel" : "") + (ev.x == null ? " nopos" : "");
+      r.innerHTML = `<span class="t">${fmt(ev.t)}</span><span>${ev.line}</span><span class="d ${ev.dir}">${ev.dir === "in" ? "IN" : "OUT"}</span><span class="p" style="color:var(--sub)">${ev.x == null ? "位置なし" : "位置あり"}</span>`;
+      const del = document.createElement("button"); del.type = "button"; del.textContent = "消す";
+      del.onclick = (e) => { e.stopPropagation(); events = events.filter((x) => x !== ev); changed(); };
+      r.onclick = () => { sel = ev; video.pause(); video.currentTime = ev.t; renderList(); draw(); };
+      r.appendChild(del); el.appendChild(r);
+    });
+    const ni = events.filter((e) => e.dir === "in").length, no = events.length - ni;
+    $("cIn").textContent = "IN " + ni; $("cOut").textContent = "OUT " + no; $("cAll").textContent = "計 " + events.length;
+    const d = video.duration || 1, tk = $("ticks"); tk.innerHTML = "";
+    events.forEach((ev) => { const s = document.createElement("span"); s.className = "tick " + ev.dir; s.style.left = (ev.t / d) * 100 + "%"; tk.appendChild(s); });
+  }
+  function dump() {
+    const o = { video: fileKey.split("|")[0] || "", duration: +fmt(video.duration), lines: LINES.map((L) => ({ name: L.name, line: L.p })), events: events.slice().sort((a, b) => a.t - b.t).map((e) => ({ t: +fmt(e.t), line: e.line, dir: e.dir, x: e.x == null ? null : +e.x.toFixed(3), y: e.y == null ? null : +e.y.toFixed(3), ...(e.c != null ? { c: e.c } : {}) })),
+      rejected: Object.keys(cst).filter((k) => cst[k] === "no").map((k) => ({ t: CANDS[k].t, dir: CANDS[k].dir, line: CANDS[k].line })) };
+    $("json").value = JSON.stringify(o);
+  }
+  function renderCands() {
+    const el = $("clist"); el.innerHTML = "";
+    CANDS.forEach((cd, i) => {
+      const r = document.createElement("div"); r.className = "crow" + (i === selC ? " sel" : "") + (cst[i] ? " " + cst[i] : "");
+      r.innerHTML = `<span class="t">${fmt(cd.t)}</span><span class="d ${cd.dir}" style="font-weight:600;color:var(--${cd.dir === "in" ? "in" : "out"})">${cd.dir === "in" ? "IN" : "OUT"}</span><span>${cd.line}</span><span style="color:var(--sub)" title="数えた入力の数">×${cd.n}</span>`;
+      const b = document.createElement("span"); b.className = "btns";
+      const yes = document.createElement("button"); yes.type = "button"; yes.className = "yes"; yes.textContent = "○ 本物";
+      const no = document.createElement("button"); no.type = "button"; no.className = "no"; no.textContent = "× 違う";
+      const decide = (v) => (e) => {
+        e.stopPropagation();
+        const was = cst[i];
+        events = events.filter((x) => !(x.c === i));            // 前の判定の、追加分を戻す
+        if (was === v) delete cst[i]; else { cst[i] = v; if (v === "ok") events.push({ t: cd.t, line: cd.line, dir: cd.dir, x: cd.x, y: cd.y, c: i }); }
+        const next = CANDS.findIndex((_, j) => j > i && !cst[j]);
+        if (cst[i] && next >= 0) { selC = next; video.pause(); video.currentTime = CANDS[next].t; }
+        changed();
+      };
+      yes.onclick = decide("ok"); no.onclick = decide("no");
+      b.append(yes, no); r.appendChild(b);
+      r.onclick = () => { selC = i; video.pause(); video.currentTime = Math.max(0, cd.t - 0.3); renderCands(); draw(); };
+      el.appendChild(r);
+    });
+    const done = Object.keys(cst).length, ok = Object.values(cst).filter((v) => v === "ok").length;
+    $("cmsg").dataset.done = done; $("cmsg").querySelector("b").textContent = `本物の通過なら「○」（いま ${ok} 件）`;
+  }
+  function changed() { store.set(events); try { localStorage.setItem("cands:" + fileKey, JSON.stringify(cst)); } catch { /* 保存できなくても、使える */ } renderList(); renderCands(); dump(); draw(); }
+
+  function mark(dir) {
+    if (!video.duration) return;
+    const h = hover;
+    events.push({ t: video.currentTime, line: LINES[line].name, dir, x: h ? h.x : null, y: h ? h.y : null });
+    changed();
+    $("msg").textContent = `${fmt(video.currentTime)} 秒に、${LINES[line].name} の ${dir === "in" ? "IN" : "OUT"} を記録しました`;
+  }
+  const step = (s) => { video.pause(); video.currentTime = Math.min(Math.max(0, video.currentTime + s), video.duration || 0); };
+  const toggle = () => (video.paused ? video.play() : video.pause());
+  const pick = (l) => { line = l; document.querySelectorAll(".ln").forEach((b) => b.classList.toggle("on", +b.dataset.l === l)); draw(); };
+
+  $("file").onchange = (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    fileKey = f.name + "|" + f.size;
+    video.src = URL.createObjectURL(f); $("empty").hidden = true;
+    video.onloadedmetadata = () => { events = store.get() || []; try { cst = JSON.parse(localStorage.getItem("cands:" + fileKey) || "{}"); } catch { cst = {}; } $("msg").textContent = events.length ? `前回の記録 ${events.length} 件を読み込みました` : ""; changed(); ui(); };
+  };
+  $("play").onclick = toggle;
+  $("back1s").onclick = () => step(-1); $("fwd1s").onclick = () => step(1);
+  $("back1f").onclick = () => step(-1 / FPS); $("fwd1f").onclick = () => step(1 / FPS);
+  $("seek").oninput = () => { if (video.duration) { video.pause(); video.currentTime = ($("seek").value / 1000) * video.duration; } };
+  document.querySelectorAll(".rate").forEach((b) => (b.onclick = () => { video.playbackRate = +b.dataset.r; document.querySelectorAll(".rate").forEach((x) => x.classList.toggle("on", x === b)); }));
+  document.querySelectorAll(".ln").forEach((b) => (b.onclick = () => pick(+b.dataset.l)));
+  $("markIn").onclick = () => mark("in"); $("markOut").onclick = () => mark("out");
+  $("undo").onclick = () => { events.pop(); changed(); };
+  $("copy").onclick = async () => {
+    dump(); const ta = $("json");
+    try { await navigator.clipboard.writeText(ta.value); $("msg").textContent = "コピーしました。チャットに貼ってください"; }
+    catch { ta.focus(); ta.select(); $("msg").textContent = "選択しました。コピーしてください（Ctrl/⌘+C）"; }
+  };
+  $("load").onclick = () => {
+    try {
+      const o = JSON.parse($("json").value); events = (o.events || []).map((e) => ({ t: +e.t, line: e.line, dir: e.dir, x: e.x ?? null, y: e.y ?? null, ...(e.c != null ? { c: e.c } : {}) }));
+      cst = {}; events.forEach((e) => { if (e.c != null) cst[e.c] = "ok"; });
+      (o.rejected || []).forEach((r) => { const i = CANDS.findIndex((c) => c.t === r.t && c.dir === r.dir && c.line === r.line); if (i >= 0) cst[i] = "no"; });
+      const seen = {}; events.forEach((e) => { if (e.x != null) { const k = e.x + "," + e.y; seen[k] = (seen[k] || 0) + 1; } });
+      events.forEach((e) => { if (e.x != null && seen[e.x + "," + e.y] >= 3) { e.x = null; e.y = null; } });   // 同じ位置が何件も並ぶ：マウスを動かさずに押した記録なので、位置なしとして扱う
+      sel = events.slice().sort((a, c) => a.t - c.t).find((v) => v.x == null) || null; if (sel) { video.pause(); video.currentTime = sel.t; }
+      changed(); $("msg").textContent = `${events.length} 件を読み込みました`; }
+    catch { $("msg").textContent = "読み込めません。書き出した内容を、そのまま貼ってください"; }
+  };
+
+  cv.addEventListener("mousemove", (e) => { const b = box(), r = cv.getBoundingClientRect(); const x = (e.clientX - r.left - b.x) / b.w, y = (e.clientY - r.top - b.y) / b.h; hover = x >= 0 && x <= 1 && y >= 0 && y <= 1 ? { x, y } : null; draw(); });
+  cv.addEventListener("mouseleave", () => { hover = null; draw(); });
+  // 行を選んでいるときは、映像の上のクリックで、その記録の位置（越えた人の足元）を付ける。選んでいなければ、再生・停止
+  cv.addEventListener("click", (e) => {
+    if (!sel) { toggle(); return; }
+    const b = box(), r = cv.getBoundingClientRect(), x = (e.clientX - r.left - b.x) / b.w, y = (e.clientY - r.top - b.y) / b.h;
+    if (x < 0 || x > 1 || y < 0 || y > 1) return;
+    sel.x = x; sel.y = y;
+    const rest = events.slice().sort((a, c) => a.t - c.t).filter((v) => v.x == null);
+    $("msg").textContent = `${fmt(sel.t)} 秒の位置を付けました。位置なしは、あと ${rest.length} 件`;
+    sel = rest[0] || null;
+    if (sel) { video.pause(); video.currentTime = sel.t; }
+    changed();
+  });
+  window.addEventListener("resize", draw);
+  ["timeupdate", "play", "pause", "seeked", "loadeddata"].forEach((n) => video.addEventListener(n, ui));
+  (function loop() { if (!video.paused) ui(); requestAnimationFrame(loop); })();
+
+  window.addEventListener("keydown", (e) => {
+    if (/^(TEXTAREA|INPUT)$/.test(document.activeElement.tagName) && document.activeElement.type !== "range") return;
+    const k = e.key.toLowerCase();
+    if (k === " ") { e.preventDefault(); toggle(); }
+    else if (k === "arrowleft") { e.preventDefault(); step(-1 / FPS); }
+    else if (k === "arrowright") { e.preventDefault(); step(1 / FPS); }
+    else if (k === "j") step(-1); else if (k === "l") step(1);
+    else if (k === "1") pick(0); else if (k === "2") pick(1);
+    else if (k === "i") mark("in"); else if (k === "o") mark("out");
+    else if (k === "backspace") { e.preventDefault(); events.pop(); changed(); }
+  });
+  renderList(); dump(); draw();
+})();
+</script>
