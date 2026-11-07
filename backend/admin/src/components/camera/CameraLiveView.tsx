@@ -34,7 +34,9 @@ export function CameraLiveView({ cameraId }: { cameraId: string }) {
     return () => ro.disconnect();
   }, []);
 
-  const ratio = live.size ? live.size.w / live.size.h : 16 / 9;
+  // 映像が届いていなくても、前に届いたときの大きさ（cam.size）で、枠を作る。線は、映像が無くても、編集できる（位置は、目安）
+  const known = cam?.size?.[0] && cam.size[1] ? cam.size[0] / cam.size[1] : 16 / 9;
+  const ratio = live.size ? live.size.w / live.size.h : known;
   const lines = editor.draft ?? live.info?.lines ?? [];
   const editable = cam?.source === "db";
   const tone = live.status.tone === "ok" ? "ok" : live.status.tone === "wait" ? "warn" : "bad";
@@ -65,7 +67,7 @@ export function CameraLiveView({ cameraId }: { cameraId: string }) {
               {realtime ? "リアルタイムを停止" : `リアルタイム（${live.info?.requested_fps ?? 15}fps）`}
             </Button>
             <Button variant="outlined" onClick={() => live.info && editor.start(live.info.lines)}
-              disabled={!live.size || !live.info || !editable} title={!editable ? "yaml で固定した端末の線は、変えられません" : !live.size ? "映像が届いてから、編集できます" : ""}>
+              disabled={!live.info || !editable} title={!editable ? "yaml で固定した端末の線は、変えられません" : !live.size ? "映像が無くても、線は編集できます（位置は、目安です）" : ""}>
               線を編集
             </Button>
             <Button variant="outlined" onClick={fullscreen}>全画面</Button>
