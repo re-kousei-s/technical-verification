@@ -116,6 +116,7 @@
       <span class="pill bad" id="connPill">停止中</span>
       <b id="camTitle"></b>
       <span style="flex:1"></span>
+      <button class="gbtn" id="previewQuickBtn">👁 プレビュー</button>
       <button class="gbtn" id="fsBtn">⛶</button>
       <button class="gbtn" id="menuBtn">⚙ 設定</button>
     </div>
@@ -131,6 +132,7 @@
       <div class="actions">
         <button class="gbtn" id="pickVideoBtn">🎞 動画</button>
         <button class="gbtn" id="pickScreenBtn">🖥 画面共有</button>
+        <button class="gbtn hidden" id="playBtn">▶ 再生</button>
         <div class="runstate" id="runState">待機中</div>
       </div>
     </div>
@@ -141,11 +143,12 @@
       <div class="sheet-body">
         <div class="card" id="testCard">
           <b>テスト動画で送る</b>
-          <div class="hint" style="margin-top:6px">カメラの代わりに、動画ファイルをくり返し再生して送ります（スマホを置いたままの動作確認用）。送信を止めてから切り替えてください。</div>
+          <div class="hint" style="margin-top:6px">カメラの代わりに、動画ファイルを送ります（スマホを置いたままの動作確認用）。選ぶと、最初は停止状態です。画面の「▶ 再生」で始めます。送信中は、動画の時刻を 1/fps 秒ずつ進めて（コマ送り）撮るので、ブラウザが止まっても、映像は飛びません。送信を止めてから切り替えてください。</div>
           <div class="row" style="margin-top:10px">
             <input type="file" id="testFile" accept="video/*" style="max-width:100%">
             <button id="testOff" class="hidden">カメラに戻す</button>
           </div>
+          <label class="row" style="margin-top:8px"><input type="checkbox" id="testLoop"> くり返し再生する（既定はオフ）</label>
           <div class="hint" id="testMsg" style="margin-top:6px"></div>
         </div>
         <div class="card">
@@ -242,6 +245,7 @@ const store = {
 };
 
 let cam = null, stream = null, ws = null, encoder = null, timer = null, running = false, wakeLock = null;
+let stepping = false, stepPaused = true, stepT = 0, stepRun = 0;   // テスト動画のコマ送り（撮影の節を参照）
 let frameNo = 0, needKey = true, sent = 0, skipped = 0, bytes = 0, bytesAt = performance.now(), lineDirty = false;
 let lines = [], drag = null, selLine = null, polling = false;   // selLine: 選んでいる線の番号   // lines: 数える線のリスト、drag: いま動かしている線の端 {li, pi}
 const DEFAULT_RES = "1280x960";   // 既定は 4:3。16:9 より、センサー全体を使うので広く映ることが多い
@@ -320,10 +324,30 @@ async function openCamera() {
 let testUrl = null;
 async function openTestVideo() {
   const v = $("video");
-  v.srcObject = null; v.src = testUrl; v.loop = true; v.muted = true; v.playsInline = true;
-  try { await v.play(); $("mainMsg").textContent = ""; drawOverlay(); $("testMsg").textContent = `再生中: ${v.videoWidth}×${v.videoHeight}`; }
-  catch (e) { $("mainMsg").textContent = "動画を再生できません: " + e.message; }
+  v.srcObject = null; v.src = testUrl; v.loop = $("testLoop").checked; v.muted = true; v.playsInline = true;
+  try {   // 選んだ直後は、停止状態（最初の 1 コマを出して、止めておく）。「▶ 再生」で始める
+    await new Promise((ok, ng) => { v.onloadeddata = ok; v.onerror = () => ng(new Error("読み込めません")); });
+    v.pause(); v.currentTime = 0;
+    $("mainMsg").textContent = ""; drawOverlay(); $("testMsg").textContent = `停止中: ${v.videoWidth}×${v.videoHeight}（「▶ 再生」で始めます）`;
+  } catch (e) { $("mainMsg").textContent = "動画を読み込めません: " + e.message; }
+  updatePlayBtn();
 }
+// 動画の再生・一時停止（テスト動画のときだけ、ボタンを出す）
+function updatePlayBtn() {
+  const v = $("video");
+  $("playBtn").classList.toggle("hidden", !testUrl);
+  const paused = stepping ? stepPaused : (v.paused || v.ended);
+  $("playBtn").textContent = paused ? "▶ 再生" : "⏸ 一時停止";
+}
+$("playBtn").onclick = async () => {
+  const v = $("video");
+  if (stepping) { stepPaused = !stepPaused; updatePlayBtn(); return; }   // 送信中の、テスト動画は、コマ送りの再開・一時停止
+  if (v.paused || v.ended) { if (v.ended) v.currentTime = 0; try { await v.play(); } catch (e) { $("mainMsg").textContent = "再生できません: " + e.message; } }
+  else v.pause();
+  updatePlayBtn();
+};
+for (const ev of ["play", "pause", "ended"]) $("video").addEventListener(ev, updatePlayBtn);
+$("testLoop").onchange = () => { $("video").loop = $("testLoop").checked; };
 function setTestVideo(file) {
   if (screenOn) stopScreenShare(false);   // 画面共有中に、動画を選んだ：画面共有を止める
   closeStream();
@@ -334,6 +358,7 @@ function setTestVideo(file) {
   if (file) { $("testMsg").textContent = "読み込み中…"; openTestVideo(); return; }
   const v = $("video"); v.pause(); v.removeAttribute("src"); v.load(); v.loop = false;
   $("testMsg").textContent = ""; $("testFile").value = "";
+  updatePlayBtn();
   openCamera();
 }
 $("testFile").onchange = () => setTestVideo($("testFile").files[0] || null);
@@ -349,7 +374,7 @@ async function startScreenShare() {
   }
   try {
     const s = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15, max: 15 } }, audio: false });
-    if (testUrl) { URL.revokeObjectURL(testUrl); testUrl = null; $("testOff").classList.add("hidden"); $("pickVideoBtn").textContent = "🎞 動画"; $("testMsg").textContent = ""; }
+    if (testUrl) { URL.revokeObjectURL(testUrl); testUrl = null; $("testOff").classList.add("hidden"); $("pickVideoBtn").textContent = "🎞 動画"; $("testMsg").textContent = ""; updatePlayBtn(); }
     closeStream();   // カメラは、止める
     const was = running, fps = curFps;
     if (was) stopSending();   // 映像の大きさが変わるので、符号化をやり直す
@@ -694,8 +719,46 @@ async function startSendingInner(fps) {
     encoder.configure(encCfg);
   }
   capCanvas = new OffscreenCanvas(w, h); capCtx = capCanvas.getContext("2d");
-  timer = setInterval(captureTick, 1000 / curFps);
+  startCapture();
   try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {}
+}
+
+/* ---------- 撮影：カメラ・画面共有は、タイマーで撮る。テスト動画は、コマ送り ----------
+   テスト動画を、実時間で再生して、タイマーで撮ると、ブラウザが 0.5〜1 秒止まったとき、その間の映像が飛ぶ（数え漏れのもと）。
+   コマ送りは、動画の時刻を、1/fps 秒ずつ進めて（シークして）撮る。止まっても、遅れるだけで、映像は飛ばない。
+   送る間隔は、実時間の fps のまま（動画は、等倍の速さで進む）。毎回、同じ映像が、同じ間隔で送られるので、試験を再現できる。 */
+function startCapture() {
+  if (testUrl && !screenOn) startStepLoop(); else timer = setInterval(captureTick, 1000 / curFps);
+}
+function stopCapture() { clearInterval(timer); timer = null; stepRun++; stepping = false; }
+function seekTo(v, t) {
+  return new Promise((res) => {
+    if (Math.abs(v.currentTime - t) < 1e-3) { res(); return; }
+    let done = false; const fin = () => { if (!done) { done = true; v.removeEventListener("seeked", fin); res(); } };
+    v.addEventListener("seeked", fin); setTimeout(fin, 1500);   // 1.5 秒待っても終わらなければ、先へ進む
+    try { v.currentTime = t; } catch { fin(); }
+  });
+}
+async function startStepLoop() {
+  const v = $("video"), my = ++stepRun;
+  stepping = true; stepPaused = v.paused;   // 送り始めた時点で、再生中なら、そのまま進める。止まっていれば、「▶ 再生」を待つ
+  v.pause(); stepT = v.currentTime || 0;
+  let due = performance.now();
+  updatePlayBtn();
+  while (running && stepRun === my) {
+    const wait = due - performance.now();
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    if (!running || stepRun !== my) break;
+    if (!stepPaused) {
+      let t = stepT; const d = v.duration || 0;
+      if (d && t >= d - 0.02) { if ($("testLoop").checked) t = 0; else { stepPaused = true; t = null; updatePlayBtn(); } }
+      if (t !== null) { await seekTo(v, t); stepT = t + 1 / curFps; }
+    }
+    captureTick();   // いま表示している 1 コマを、撮って符号化する（止まっていても、送り続ける）
+    due += 1000 / curFps;
+    if (performance.now() - due > 1000 / curFps) due = performance.now() + 1000 / curFps;   // 大きく遅れた：まとめて送らず、目安を作り直す
+  }
+  if (stepRun === my) { stepping = false; updatePlayBtn(); }
 }
 
 // 1フレーム撮って符号化する
@@ -721,13 +784,13 @@ function applySendFps(n) {
   try { encoder.configure({ ...encCfg, framerate: n, bitrate }); }
   catch (e) { $("mainMsg").textContent = "fps を切り替えられません: " + e.message; return; }
   needKey = true;
-  clearInterval(timer); timer = setInterval(captureTick, 1000 / n);
+  if (!stepping) { clearInterval(timer); timer = setInterval(captureTick, 1000 / n); }   // コマ送り中は、ループが、curFps を読む
   setConn(true, connText());
 }
 
 // 映像を送るのを止める（サーバーとの接続は、つないだまま）
 function stopSending() {
-  running = false; clearInterval(timer); timer = null; curFps = SEND_FPS;
+  running = false; stopCapture(); curFps = SEND_FPS;
   try { encoder?.close(); } catch {} encoder = null;
   try { wakeLock?.release(); } catch {} wakeLock = null;
   setConn(!!ws && ws.readyState === 1, connText()); syncFsToggle();
@@ -808,13 +871,16 @@ $("anchorSel").onchange = () => api(`/api/cameras/${cam.id}`, { method: "PATCH",
 function applyPreview() {
   $("stage").classList.toggle("off", !previewOn); $("offNote").classList.toggle("hidden", previewOn);
   $("previewBtn").textContent = previewOn ? "プレビュー: 表示中" : "プレビュー: 切っている";
+  $("previewQuickBtn").textContent = previewOn ? "👁 プレビュー" : "🚫 プレビュー切";   // 上の帯のボタン：押すだけで切り替える
   if (previewOn) { drawOverlay(); }
 }
-$("previewBtn").onclick = () => {
+function togglePreview() {
   previewOn = !previewOn; prefs.set({ preview: previewOn });
   applyPreview();
   lineMsg(previewOn ? "" : "プレビューを切りました。線を動かすときは、プレビューを表示してください。");
-};
+}
+$("previewBtn").onclick = togglePreview;
+$("previewQuickBtn").onclick = togglePreview;
 
 /* ---------- 設置画面の操作 ---------- */
 // 選んだ線を消すボタン：線を選んでいて、2 本以上あるときだけ出す（線は 1 本以上必要）
