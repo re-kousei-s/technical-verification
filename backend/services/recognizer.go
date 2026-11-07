@@ -96,8 +96,11 @@ func (r *Recognizer) startDecoderLocked() error {
 // sampleLoop は、デコードされた JPEG を、認識に回す頻度（sample_fps）に間引いて、キューに積む。
 func (r *Recognizer) sampleLoop(dec *Decoder) {
 	interval := time.Duration(float64(time.Second) / r.sampleFPS)
-	const tolerance = 20 * time.Millisecond // 少し早く届いても採る（30fps なら 1 フレーム以内）
-	var last time.Time
+	// 採る時刻の目安（格子）を、interval ごとに進める。目安より early だけ早く届いたものまでは、採る。
+	// 前に採った時刻からの間隔で決めると、スマホが、ちょうど sample_fps で送ってくるとき、少し早く届いたフレームを捨てて、
+	// 次のフレーム（約 2 倍の間隔）を採ってしまい、実質の fps が半分になる（追跡が途切れる）。
+	early := interval * 2 / 5
+	var next time.Time
 	partition := r.queue.PartitionOf(r.cameraID)
 	for {
 		select {
@@ -108,10 +111,16 @@ func (r *Recognizer) sampleLoop(dec *Decoder) {
 				return // ffmpeg が終わった
 			}
 			now := time.Now()
-			if !last.IsZero() && now.Sub(last) < interval-tolerance {
-				continue // 間引く
+			if next.IsZero() {
+				next = now
 			}
-			last = now
+			if now.Before(next.Add(-early)) {
+				continue // 間引く（目安の時刻より、だいぶ早い）
+			}
+			next = next.Add(interval)
+			if now.After(next.Add(interval)) {
+				next = now.Add(interval) // 止まっていた（遅れすぎ）：目安を、いまから作り直す
+			}
 			// キューがあふれそうなら、新しいフレームを捨てる（worker が追いついていない目印）
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			if n, err := r.queue.Length(ctx, partition); err == nil && n >= int64(r.env.MaxQueue) {
