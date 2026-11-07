@@ -24,7 +24,7 @@
 | フォルダ | 中身 |
 |---|---|
 | `backend/` | **Go**。`controller`（HTTP/WebSocket の入口）→ `services`（業務ロジック）→ `repository`（DB・Redis）→ `models`。`web/`（スマホの送信ページ）、`admin/`（管理画面：React + TypeScript + Tailwind。Docker のビルドで `web/admin_dist` に入り、Go に埋め込まれる）、`gateway/`（HTTPS 用の nginx） |
-| `worker/` | **Python**。`worker.py`（起動）、`libs/`（処理の部品）、`aggregator/`（追跡・線の判定）、`common/`（検出器など）、`models/`（モデルの重み） |
+| `worker/` | **Python**。`worker.py`（検出 + 追跡）、`judge.py`（線を越えたかの判定。画像は見ない）、`libs/`（処理の部品）、`aggregator/`（追跡 `tracking.py`・判定 `judge.py`）、`common/`（検出器など）、`models/`（モデルの重み） |
 | `mobile/` | **Flutter（Android）クライアント**。画面ロック中も送る前面サービス（Kotlin）つき。詳しくは [mobile/README.md](mobile/README.md) |
 | `database/` | `schema.sql`（テーブル定義。`db-init` が起動のたびに流す。何度流しても同じ） |
 | `config/` | `cameras.yaml`（端末の既定・フロアのしきい値・ライブ表示）、`matrix.yaml`（トラッカー・検出の最低スコア） |
@@ -74,7 +74,7 @@ docker compose --profile live up -d --build
 
 - 初回は、イメージのビルドとダウンロードがあるので、数分〜十数分かかる（ネットワークの速さ次第）。2 回目以降は、数秒。
 - `--profile live` は、「通常の構成（redis・postgres・backend・gateway・worker）を起動する」という意味。付け忘れると、何も起動しない。
-- 起動する順序は、自動で守られる：redis・postgres → `db-init`（テーブルを作る。終わると止まる）→ backend → gateway・worker。
+- 起動する順序は、自動で守られる：redis・postgres → `db-init`（テーブルを作る。終わると止まる）→ backend → gateway・worker・judge。
 
 起動したかの確認：
 
