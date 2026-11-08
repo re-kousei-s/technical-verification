@@ -32,6 +32,11 @@ func NewDeviceController(cameras *services.CameraService, streams *services.Stre
 func (d *DeviceController) Register(e *echo.Echo) {
 	e.GET("/", d.senderPage)
 	e.GET("/sender", d.senderPage)
+	// 外へ出すトンネル（shconn.org など）の、確認・再ログインの画面は、終わると、元の URL へ POST で戻ってくる。
+	// そのままだと 405（Method Not Allowed）になるので、同じ URL の GET へ送り直す
+	toGet := func(c echo.Context) error { return c.Redirect(http.StatusSeeOther, c.Request().URL.RequestURI()) }
+	e.POST("/", toGet)
+	e.POST("/sender", toGet)
 	e.GET("/healthz", func(c echo.Context) error { return c.JSON(200, map[string]bool{"ok": true}) })
 
 	e.GET("/api/floors", d.listFloors)
