@@ -132,6 +132,7 @@ aggregator:
         high_conf_det_threshold: 0.25
         low_conf_det_threshold: 0.2
         max_speed_heights_per_second: 1.5   # 1秒に枠の高さ何個分まで動けるとみなすか
+        app_weight: 0.3   # 服の色（胴体の色のヒストグラム）の違いを、対応付けの費用に足す重み。人が重なったときの ID の取り違えを減らす（正解 24 件で、拾える数 100→103）。色の違いで、つなぐのを禁止はしない（app_max: 1.0）
 
 evaluation:
   # エッジ系の誤差を比べる基準（サーバー系）

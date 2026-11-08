@@ -29,7 +29,8 @@ class CameraCounter:
         t = ts_to_sec(msg["ts"])
         dets = msg["detections"]
         boxes = [[d["x"], d["y"], d["x"] + d["w"], d["y"] + d["h"]] for d in dets]
-        tracked = self.tracker.update(boxes, [d["score"] for d in dets], t)
+        feats = [d.get("feat") for d in dets] if any(d.get("feat") is not None for d in dets) else None
+        tracked = self.tracker.update(boxes, [d["score"] for d in dets], t, feats)
         tracks = tracks_of(tracked)
         events, alias = self.lifecycle.update(tracks)
         self.judge.update(t, tracks, events, alias)

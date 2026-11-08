@@ -11,6 +11,7 @@ import time
 import cv2
 import numpy as np
 
+from aggregator.appearance import torso_hist
 from aggregator.tracking import tracks_of
 from common.live import now_ms, tracks_stream
 from common.tiling import detect_tiled
@@ -55,7 +56,8 @@ class FrameProcessor:
         infer_ms = (time.perf_counter() - t0) * 1000
 
         # 2) 追跡（人ごとに ID を付け続ける）
-        tracked = tracker.update(boxes, scores, ts_ms / 1000.0)
+        feats = [torso_hist(frame, b) for b in boxes]  # 服の色（人が重なったときの、ID の取り違えを減らす）
+        tracked = tracker.update(boxes, scores, ts_ms / 1000.0, feats)
         tracks = tracks_of(tracked)
         events, alias = lifecycle.update(tracks)  # 人の状態管理：判定に渡す座標を作る（starting・moving・deleted）
 

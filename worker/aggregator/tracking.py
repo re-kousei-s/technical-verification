@@ -37,13 +37,16 @@ class Tracker:
         self.tracker = build_tracker(tracker_cfg, sample_fps)
         self.t0 = None
 
-    def update(self, boxes, scores, t_sec):
+    def update(self, boxes, scores, t_sec, feats=None):
         """boxes は [x1, y1, x2, y2] の並び、t_sec はそのフレームの時刻（秒）。追跡した結果（sv.Detections）を返す。"""
         if self.t0 is None:
             self.t0 = t_sec
         if len(boxes):
             det = sv.Detections(xyxy=np.asarray(boxes, np.float32), confidence=np.asarray(scores, np.float32),
                                 class_id=np.zeros(len(boxes), int))
+            if feats is not None:  # 服の色のヒストグラム（無い枠は、0 と has_feat=False）
+                det.data["has_feat"] = np.array([f is not None for f in feats])
+                det.data["feat"] = np.array([f if f is not None else np.zeros(48) for f in feats], np.float32)
         else:
             det = sv.Detections.empty()
         return self.tracker.update(det, timestamp=t_sec - self.t0)
