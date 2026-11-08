@@ -88,6 +88,7 @@ services:
       CAMERAS: /config/cameras.yaml
       MODELS_DIR: /models
       ORT_THREADS: "1"                        # 推論のスレッド数（1 コアの worker なので 1。1 スレッド × 多数のほうが、2 スレッドより、コアあたりの効率が良い）
+      RECORD_DIR: /rec                        # ライブの検出結果を、ここへ記録する（空にすると、記録しない）
       DETECTOR: yolox_tiny_416                # YOLOX-tiny（ONNX、Apache-2.0、入力 416）。人が大量にいても、Lite0 より強い。精度優先なら yolox_s_640、最軽量なら efficientdet_lite0_int8
       # WORKER_NAME は、指定しない（台数を増やしても、名前が重ならないよう、コンテナ名になる）。WORKER_PARTITIONS も、指定しない（自動で分け合う）
     volumes: &worker-volumes
@@ -97,6 +98,7 @@ services:
       - ./worker/libs:/app/libs:ro
       - ./worker/worker.py:/app/worker.py:ro
       - ./worker/models:/models
+      - ./_unused/outputs/live:/rec           # ライブの検出結果の記録（RECORD_DIR）。オフラインで再生・採点する
     depends_on:
       redis: {condition: service_healthy}
       db-init: {condition: service_completed_successfully}

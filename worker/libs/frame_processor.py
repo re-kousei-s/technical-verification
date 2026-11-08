@@ -15,7 +15,7 @@ from aggregator.appearance import torso_hist
 from aggregator.tracking import tracks_of
 from common.live import now_ms, tracks_stream
 from common.tiling import detect_tiled
-from libs.settings import DETECTOR, STALE_MS
+from libs.settings import DETECTOR, RECORD_DIR, STALE_MS
 
 log = logging.getLogger("worker")
 
@@ -58,6 +58,8 @@ class FrameProcessor:
         # 2) 追跡（人ごとに ID を付け続ける）
         feats = [torso_hist(frame, b) for b in boxes]  # 服の色（人が重なったときの、ID の取り違えを減らす）
         tracked = tracker.update(boxes, scores, ts_ms / 1000.0, feats)
+        if RECORD_DIR:
+            self._record(camera_id, ts_ms, w, h, boxes, scores, feats)
         tracks = tracks_of(tracked)
         events, alias = lifecycle.update(tracks)  # 人の状態管理：判定に渡す座標を作る（starting・moving・deleted）
 
@@ -69,3 +71,15 @@ class FrameProcessor:
 
         self.output.publish_image(camera_id, frame, tracked, cam)
         self.stats.add(infer_ms, max(0, now_ms() - ts_ms))
+
+    @staticmethod
+    def _record(camera_id, ts_ms, w, h, boxes, scores, feats):
+        """検出の結果を、1 フレーム 1 行で、追記する（日ごと・端末ごとのファイル）。記録に失敗しても、処理は止めない。"""
+        try:
+            dets = [[*(round(float(v), 1) for v in b[:4]), round(float(s), 3),
+                     None if f is None else [round(float(v), 4) for v in f]] for b, s, f in zip(boxes, scores, feats)]
+            day = time.strftime("%Y%m%d", time.gmtime(ts_ms / 1000))
+            with open(f"{RECORD_DIR}/{camera_id}-{day}.jsonl", "a") as fp:
+                fp.write(json.dumps({"ts_ms": ts_ms, "w": w, "h": h, "dets": dets}) + "\n")
+        except OSError as e:
+            log.warning("検出の記録に失敗: %s", e)

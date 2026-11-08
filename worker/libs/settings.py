@@ -27,4 +27,7 @@ MATRIX = os.environ.get("CONFIG", "/config/matrix.yaml")  # 検出の最低ス�
 RESULT_MIN_SCORE = 0.25  # 認識結果として表示する検出の最低スコア（追跡には、これより低いものも使われている）
 STALE_MS = int(os.environ.get("STALE_MS", "8000"))  # これより古いフレームは、処理せずに捨てる（キューが溜まったとき）
 CAMERAS_RELOAD_S = 3.0  # 端末の登録・ライン・fps の変更を拾い直す間隔（秒）
+# ライブの検出結果（枠・スコア・服の色）を、端末ごとに、ファイルへ追記する場所（空なら、記録しない）。
+# あとから、追跡・判定だけを、オフラインで再生して、採点するため（_unused/tools/eval/live_replay.py）
+RECORD_DIR = os.environ.get("RECORD_DIR", "")
 ANNOTATE_EVERY_S = 1.0  # 検出枠つき画像（管理画面用）の更新間隔（秒）
