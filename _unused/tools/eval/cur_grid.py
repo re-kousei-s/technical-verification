@@ -10,20 +10,22 @@ def dist(pt, ab):
     dx, dy = bx - ax, by - ay; t = max(0, min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)))
     return math.hypot(px - (ax + t * dx), py - (ay + t * dy))
 for t in H.truth: t["line"] = min(LINES, key=lambda L: dist((t["x"], t["y"]), L["line"]))["name"]
-SETS = ["hard.yolox", "hard_q5", "hard_q7", "hard_hi", "hard.rfdetr"]
-data = {s: E.load(f"/o/{s}.json", 0.1) for s in SETS}
+SETS = os.environ.get("SETS", "hard.yolox,hard_q5,hard_q7,hard_hi,hard.rfdetr").split(",")
+data = {s: E.load(f"/o/{s}.feat.json" if os.path.exists(f"/o/{s}.feat.json") else f"/o/{s}.json", 0.1) for s in SETS}  # 服の色（.feat）があれば、それを使う
+BASE = E.MATRIX["aggregator"]["episode"]  # 設定の候補にない値は、いまの設定（matrix.yaml）
 rows = []
 for combo in itertools.product(*grid.values()):
     p = dict(zip(grid, combo))
+    trk = {k[4:]: p.pop(k) for k in list(p) if k.startswith("trk_")}
     mi = mo = ei = eo = 0
     for s in SETS:
         d, fr = data[s]
-        ev, _ = E.run(d, fr, LINES, method="episode", heading=p, pad=20)
+        ev, _ = E.run(d, fr, LINES, method="episode", heading={**BASE, **p}, pad=20, tracker_over=trk)
         tp, ex, ms = H.score(ev)
         for x in ex: ei += x[1] == "in"; eo += x[1] == "out"
         for m in ms: mi += m["dir"] == "in"; mo += m["dir"] == "out"
     hits = 120 - mi - mo
-    rows.append((-(hits - 0.5 * (ei + eo)), hits, ei + eo, mi, mo, ei, eo, p))
+    rows.append((-(hits - 0.5 * (ei + eo)), hits, ei + eo, mi, mo, ei, eo, {**p, **{'trk_' + k: v for k, v in trk.items()}}))
 rows.sort(key=lambda r: r[0])
 print("合致 / 数えすぎ | IN 漏れ OUT 漏れ | IN 過 OUT 過 | 設定")
 for _, hits, fp, mi, mo, ei, eo, p in rows[:int(os.environ.get("TOP", "8"))]:

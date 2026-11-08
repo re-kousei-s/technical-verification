@@ -19,13 +19,14 @@ _cache = {}
 
 def load(name, ms):
     if (name, ms) not in _cache:
-        _cache[(name, ms)] = E.load(name, ms)
+        feat = name.replace(".json", ".feat.json")
+        _cache[(name, ms)] = E.load(feat if os.path.exists(feat) else name, ms)  # 服の色（.feat）があれば、それを使う
     return _cache[(name, ms)]
 grid = json.loads(os.environ.get("GRID", "{}")) or {"margin": [0.15]}
 
 
 def run(params):
-    params = dict(params)
+    params = {**E.MATRIX["aggregator"].get("episode", {}), **params}  # 設定の候補にない値は、いまの設定（matrix.yaml）
     ms = params.pop("ms", 0.3)
     trk = {k[4:]: params.pop(k) for k in list(params) if k.startswith("trk_")}
     tp = fp = fn = 0

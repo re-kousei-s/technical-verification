@@ -22,7 +22,7 @@ def messages(d, frames):
     for k, dets in enumerate(frames):
         sec = k / d["fps"]
         out.append({"ts": "2026-11-04T10:%02d:%09.6f+09:00" % (int(sec // 60), sec % 60),
-                    "detections": [{"x": b[0], "y": b[1], "w": b[2] - b[0], "h": b[3] - b[1], "score": b[4]} for b in dets]})
+                    "detections": [{"x": b[0], "y": b[1], "w": b[2] - b[0], "h": b[3] - b[1], "score": b[4], "feat": b[5] if len(b) > 5 else None} for b in dets]})
     return out
 
 
