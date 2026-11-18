@@ -261,6 +261,18 @@ func (s *CameraService) SetCameraSettings(id string, in map[string]any) (json.Ra
 		}
 		out["bitrate"] = int(v)
 	}
+	if v, ok := in["codec"].(string); ok { // 送り方：h264（既定）／ jpeg（1 枚ずつ JPEG。端末ごとの符号化の差が出にくいが、通信量が 2〜3 倍）
+		if v != "h264" && v != "jpeg" {
+			return nil, errInvalid("送り方は h264 か jpeg")
+		}
+		out["codec"] = v
+	}
+	if v, ok := in["jpeg_quality"].(float64); ok { // JPEG の品質（50〜95）
+		if v < 50 || v > 95 {
+			return nil, errInvalid("JPEG の品質は 50〜95")
+		}
+		out["jpeg_quality"] = int(v)
+	}
 	if v, ok := in["device_id"].(string); ok && v != "" {
 		if len(v) > 200 {
 			return nil, errInvalid("カメラの ID が長すぎる")

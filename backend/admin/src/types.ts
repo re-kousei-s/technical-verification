@@ -58,7 +58,7 @@ export interface LiveInfo {
   lines: Line[]; in: number; out: number; line_counts: Record<string, { in: number; out: number }>;
   caps: CameraCaps | null;
   /** 管理画面で決めた、カメラの設定（なければ null） */
-  camera_settings: { res?: string; zoom?: number; device_id?: string; bitrate?: number } | null;
+  camera_settings: { res?: string; zoom?: number; device_id?: string; bitrate?: number; codec?: "h264" | "jpeg"; jpeg_quality?: number } | null;
 }
 
 /** スマホが報告する、カメラの能力と、いまの設定 */

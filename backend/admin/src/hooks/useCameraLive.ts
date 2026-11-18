@@ -44,9 +44,28 @@ export function useCameraLive(cameraId: string, canvasRef: RefObject<HTMLCanvasE
     let shown = 0;
     let shownAt = performance.now();
 
+    // 送り方 jpeg の端末：1 枚ずつ JPEG が届く（先頭が FF D8）。デコーダーは使わず、そのまま描く
+    let jpegBusy = false;
+    const drawJpeg = (buf: Uint8Array) => {
+      const cv = canvasRef.current;
+      if (!cv || jpegBusy) return; // 前の 1 枚を描き終えていなければ、見送る
+      jpegBusy = true;
+      createImageBitmap(new Blob([buf], { type: "image/jpeg" })).then((img) => {
+        if (cv.width !== img.width || cv.height !== img.height) {
+          cv.width = img.width;
+          cv.height = img.height;
+          setSize({ w: img.width, h: img.height });
+        }
+        cv.getContext("2d")?.drawImage(img, 0, 0);
+        img.close();
+        shown++;
+      }).catch(() => { /* 壊れた 1 枚は、飛ばす */ }).finally(() => { jpegBusy = false; });
+    };
+
     const feed = (buf: Uint8Array) => {
       const cv = canvasRef.current;
       if (!cv) return;
+      if (buf.length > 2 && buf[0] === 0xff && buf[1] === 0xd8) { drawJpeg(buf); return; }
       const { key, sps } = scanNals(buf);
       if (!decoder) {
         if (!key) return; // デコードはキーフレームから始める

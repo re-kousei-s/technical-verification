@@ -247,6 +247,27 @@ const store = {
 let cam = null, stream = null, ws = null, encoder = null, timer = null, running = false, wakeLock = null;
 let stepping = false, stepPaused = true, stepT = 0, stepRun = 0;   // テスト動画のコマ送り（撮影の節を参照）
 let frameNo = 0, needKey = true, sent = 0, skipped = 0, bytes = 0, bytesAt = performance.now(), lineDirty = false;
+// 同じ絵を送らない：映像に新しいコマが出たときだけ符号化する（止まっている間は送らない）。
+// 送るフレームには、先頭に「HDF1」＋撮った時刻（ミリ秒）を付ける。撮った時刻は、そのフレームの ID。同じ絵を送り直すとき（キーフレームが要るとき）は、同じ時刻を付ける。
+// サーバーは、一度処理した時刻のフレームを、二度処理しない。
+// 送り方：h264（既定）／ jpeg（1 枚ずつ JPEG。端末ごとの符号化の差が出にくい。通信量は 2〜3 倍）。管理画面のカメラの設定で決まる
+let codec = "h264", jpegQuality = 0.8, jpegBusy = false;
+let vfcFresh = true, vfcHandle = null, lastMt = -1, lastCap = 0, sameSkip = 0;
+const capOf = new Map();   // 符号化に渡した時刻（µs）→ 撮った時刻
+function armVfc() {   // 次に新しいコマが出たら、印を付ける（カメラ・画面共有用）
+  const v = $("video");
+  if (!v.requestVideoFrameCallback || vfcHandle !== null) return;
+  vfcHandle = v.requestVideoFrameCallback(() => { vfcHandle = null; vfcFresh = true; });
+}
+// 映像の元を切り替えたら、待っている印を捨てる（切り替えで、登録が消えることがあるため）
+setTimeout(() => $("video").addEventListener("emptied", () => { vfcHandle = null; vfcFresh = true; lastMt = -1; }), 0);
+function frameHeader(buf, cap, jpeg = false) {
+  const out = new Uint8Array(12 + buf.length);
+  out.set([72, 68, jpeg ? 74 : 70, 49]);   // "HDF1"（H.264）／ "HDJ1"（JPEG）
+  new DataView(out.buffer).setBigUint64(4, BigInt(cap));
+  out.set(buf, 12);
+  return out;
+}
 let lines = [], drag = null, selLine = null, polling = false;   // selLine: 選んでいる線の番号   // lines: 数える線のリスト、drag: いま動かしている線の端 {li, pi}
 const DEFAULT_RES = "1280x960";   // 既定は 4:3。16:9 より、センサー全体を使うので広く映ることが多い
 const prefs = {
@@ -451,6 +472,13 @@ function applyCameraSettings(c) {
       const bitrate = kbps ? kbps * 1000 : Math.round(Math.min(4_000_000, baseBitrate * Math.max(1, 1 + (curFps - SEND_FPS) / 12.5)));
       try { encCfg = { ...encCfg, bitrate }; encoder.configure(encCfg); needKey = true; } catch (e) { $("mainMsg").textContent = "ビットレートを変えられません: " + e.message; }
     }
+  }
+  // 送り方（H.264 / JPEG）：変わったら、送信をやり直す
+  const nc = c.codec === "jpeg" ? "jpeg" : "h264", nq = (Number(c.jpeg_quality) || 80) / 100;
+  if (nc !== codec || nq !== jpegQuality) {
+    const was = running, fps = curFps;
+    codec = nc; jpegQuality = nq;
+    if (was) { stopSending(); startSending(fps); }
   }
   // カメラ・解像度・ズーム：変わったときだけ、映像を取り直す
   if ((c.res || "") === (prev.res || "") && (c.device_id || "") === (prev.device_id || "") && (c.zoom ?? null) === (prev.zoom ?? null)) return;
@@ -660,10 +688,10 @@ async function applyState(m) {
   const pv = !!m.preview;
   if (pv !== previewWanted) {   // 見られ始めた／見られなくなった：解像度を変えるので、符号化をやり直す
     previewWanted = pv;
-    if (encoder) stopSending();
+    if (running) stopSending();
   }
   if (n === 0) stopSending();
-  else if (!encoder) await startSending(n);
+  else if (!running) await startSending(n);   // JPEG の送り方では、符号化器（encoder）は無いので、送信中かで見る
   else applySendFps(n);
   setConn(true, connText()); syncFsToggle();
 }
@@ -678,6 +706,18 @@ async function startSendingInner(fps) {
   if (!stream && !testUrl) return;
   const v = $("video");
   $("mainMsg").textContent = ""; $("diag").textContent = "符号化の設定を探しています…";
+  if (codec === "jpeg") {   // JPEG：1 枚ずつ、canvas から JPEG にして送る（符号化器は使わない。HTTP でも動く）
+    let jw = v.videoWidth & ~1, jh = v.videoHeight & ~1;
+    if (!previewWanted && jw > RECOG_WIDTH) { jh = Math.round(jh * RECOG_WIDTH / jw) & ~1; jw = RECOG_WIDTH; }
+    running = true; sent = skipped = bytes = frameNo = 0; bytesAt = performance.now(); needKey = false; jpegBusy = false;
+    curFps = fps; capW = jw; capH = jh;
+    capCanvas = new OffscreenCanvas(jw, jh); capCtx = capCanvas.getContext("2d");
+    $("diag").textContent = `送り方: JPEG（品質 ${Math.round(jpegQuality * 100)}）／ ${jw}×${jh}`;
+    syncFsToggle();
+    startCapture();
+    try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {}
+    return;
+  }
   if (typeof VideoEncoder === "undefined") {   // HTTP（http://IP:8000）で開くと、ブラウザが符号化の機能を隠す
     $("mainMsg").textContent = `このページでは映像を符号化できません。HTTPS で開いてください → https://${location.hostname}:8000`;
     return;
@@ -706,6 +746,8 @@ async function startSendingInner(fps) {
         if (!avcParams) return;                                   // SPS/PPS がまだ分からない
         buf = avccToAnnexB(buf, avcParams, chunk.type === "key");
       }
+      const cap = capOf.get(chunk.timestamp) || Date.now(); capOf.delete(chunk.timestamp);
+      buf = frameHeader(buf, cap);
       if (ws && ws.readyState === WebSocket.OPEN && ws.bufferedAmount < MAX_BUFFERED) { ws.send(buf); sent++; bytes += buf.length; }
       else { skipped++; needKey = true; }   // 欠けたら、次のフレームをキーフレームにして復帰できるようにする
     },
@@ -763,12 +805,42 @@ async function startStepLoop() {
 
 // 1フレーム撮って符号化する
 function captureTick() {
+  if (codec === "jpeg") { captureJpeg(); return; }
   if (!encoder || encoder.encodeQueueSize > 3) { skipped++; return; }
-  capCtx.drawImage($("video"), 0, 0, capW, capH);
-  const frame = new VideoFrame(capCanvas, { timestamp: Math.round(performance.now() * 1000) });
+  const v = $("video");
+  // 新しいコマか：テスト動画のコマ送りは、動画の時刻が進んだか。カメラ・画面共有は、新しいコマが出たか（requestVideoFrameCallback）
+  const fresh = stepping ? v.currentTime !== lastMt : (!v.requestVideoFrameCallback || vfcFresh);
+  armVfc();
+  if (!fresh && !needKey) { sameSkip++; return; }   // 同じ絵：送らない
+  if (fresh) { vfcFresh = false; lastMt = v.currentTime; lastCap = Date.now(); }
+  capCtx.drawImage(v, 0, 0, capW, capH);
+  const ts = Math.round(performance.now() * 1000);
+  capOf.set(ts, lastCap);
+  if (capOf.size > 200) capOf.delete(capOf.keys().next().value);   // 符号化されずに捨てられた分
+  const frame = new VideoFrame(capCanvas, { timestamp: ts });
   const key = needKey || curFps <= 2 || frameNo % Math.round(KEYFRAME_SECONDS * curFps) === 0;   // 低い fps（一覧の小さな表示）は、毎フレームをキーフレームにする（見始めても、すぐ映る）
   encoder.encode(frame, { keyFrame: key }); frame.close();
   if (key) needKey = false;
+  frameNo++;
+}
+
+// JPEG で 1 枚送る（新しいコマのときだけ。前の 1 枚の JPEG 化が終わっていなければ、見送る）
+function captureJpeg() {
+  if (!running || !capCtx) return;
+  if (jpegBusy) { skipped++; return; }
+  const v = $("video");
+  const fresh = stepping ? v.currentTime !== lastMt : (!v.requestVideoFrameCallback || vfcFresh);
+  armVfc();
+  if (!fresh) { sameSkip++; return; }   // 同じ絵：送らない（JPEG は 1 枚で絵になるので、送り直しも要らない）
+  vfcFresh = false; lastMt = v.currentTime;
+  const cap = Date.now();
+  capCtx.drawImage(v, 0, 0, capW, capH);
+  jpegBusy = true;
+  capCanvas.convertToBlob({ type: "image/jpeg", quality: jpegQuality }).then((b) => b.arrayBuffer()).then((ab) => {
+    const buf = frameHeader(new Uint8Array(ab), cap, true);
+    if (ws && ws.readyState === WebSocket.OPEN && ws.bufferedAmount < MAX_BUFFERED) { ws.send(buf); sent++; bytes += buf.length; }
+    else skipped++;
+  }).catch(() => { skipped++; }).finally(() => { jpegBusy = false; });
   frameNo++;
 }
 
@@ -777,6 +849,12 @@ const connText = () => running ? `${recognizing ? "認識中" : "ライブ配信
 // 送る fps を変える（ライブ表示の開始・終了）。タイマーとエンコーダの設定を合わせ直し、次のフレームをキーフレームにする
 function applySendFps(n) {
   n = Math.max(1, Math.min(30, Math.round(n)));
+  if (running && codec === "jpeg" && n !== curFps) {   // JPEG：符号化器が無いので、撮る間隔だけ変える
+    curFps = n;
+    if (!stepping) { clearInterval(timer); timer = setInterval(captureTick, 1000 / n); }
+    setConn(true, connText());
+    return;
+  }
   if (!running || !encoder || !encCfg || n === curFps) { setConn(true, connText()); return; }
   curFps = n;
   // fps が上がるぶん、ビットレートも上げる（5fps = 基準、30fps で 3 倍。上限 4Mbps）

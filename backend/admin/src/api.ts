@@ -27,7 +27,7 @@ export const api = {
   deleteCamera: (id: string) => request(`/api/camera/${encodeURIComponent(id)}`, { method: "DELETE" }),
   setFloorCount: (floor: number, count: number) => request(`/api/floors/${floor}/count`, json("POST", { count })),
   setRecognize: (id: string, on: boolean) => request(`/api/camera/${encodeURIComponent(id)}/recognize`, json("POST", { on })),
-  setCameraSettings: (id: string, body: { res?: string; zoom?: number; device_id?: string; bitrate?: number }) =>
+  setCameraSettings: (id: string, body: { res?: string; zoom?: number; device_id?: string; bitrate?: number; codec?: "h264" | "jpeg"; jpeg_quality?: number }) =>
     request(`/api/camera/${encodeURIComponent(id)}/camera-settings`, json("PUT", body)),
   recognizeAll: (on: boolean) => request<{ cameras: number }>("/api/recognize/all", json("POST", { on })),
   resetHistory: (scope: { camera_id?: string; floor?: number }) => request("/api/history/reset", json("POST", scope)),

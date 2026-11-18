@@ -26,6 +26,7 @@ type Recognizer struct {
 
 	mu     sync.Mutex
 	dec    *Decoder
+	jpegs  chan Frame // 送り方 jpeg のフレーム（デコードしない。そのまま、間引いて積む）
 	stop   chan struct{}
 	wg     sync.WaitGroup
 	cancel func() // 購読をやめる
@@ -33,7 +34,7 @@ type Recognizer struct {
 
 // StartRecognizer は、認識を始める（デバイスの購読者として登録される）。
 func StartRecognizer(dev *Device, sampleFPS float64, env config.Env, queue *repository.QueueRepository) (*Recognizer, error) {
-	r := &Recognizer{cameraID: dev.ID, sampleFPS: sampleFPS, env: env, queue: queue, dev: dev, stop: make(chan struct{})}
+	r := &Recognizer{cameraID: dev.ID, sampleFPS: sampleFPS, env: env, queue: queue, dev: dev, stop: make(chan struct{}), jpegs: make(chan Frame, 16)}
 	if err := r.startDecoder(); err != nil {
 		return nil, err
 	}
@@ -56,7 +57,15 @@ func (r *Recognizer) Stop() {
 }
 
 // onChunk は、チャンクを ffmpeg に渡す。ffmpeg が止まっていたら、起動し直す。
-func (r *Recognizer) onChunk(chunk []byte) {
+func (r *Recognizer) onChunk(c Chunk) {
+	if c.JPEG { // JPEG は、デコードせずに、そのまま間引きへ
+		select {
+		case r.jpegs <- Frame{JPEG: c.Data, CapMs: c.CapMs}:
+		default:
+			r.dev.update(func(rt *Runtime) { rt.DecodeErrors++ }) // 間引きが追いつかず、捨てた
+		}
+		return
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	select {
@@ -68,7 +77,7 @@ func (r *Recognizer) onChunk(chunk []byte) {
 		}
 	default:
 	}
-	if !r.dec.Write(chunk) {
+	if !r.dec.Write(c.Data, c.CapMs) {
 		r.dev.update(func(rt *Runtime) { rt.DecodeErrors++ }) // デコーダが追いつかず、捨てた
 	}
 }
@@ -94,6 +103,9 @@ func (r *Recognizer) startDecoderLocked() error {
 }
 
 // sampleLoop は、デコードされた JPEG を、認識に回す頻度（sample_fps）に間引いて、キューに積む。
+//
+// 時刻は、スマホで撮った時刻（サーバーの時計に直したもの）。届いた時刻ではないので、送信が遅れてまとめて届いても、間隔は崩れない。
+// 一度見た撮影時刻以前のフレームは、捨てる（認識を始め直したときに、覚えている GOP を流し直す・同じ絵の送り直し で、二度処理しない）。
 func (r *Recognizer) sampleLoop(dec *Decoder) {
 	interval := time.Duration(float64(time.Second) / r.sampleFPS)
 	// 採る時刻の目安（格子）を、interval ごとに進める。目安より early だけ早く届いたものまでは、採る。
@@ -102,15 +114,30 @@ func (r *Recognizer) sampleLoop(dec *Decoder) {
 	early := interval * 2 / 5
 	var next time.Time
 	partition := r.queue.PartitionOf(r.cameraID)
+	var (
+		frame Frame
+		ok    bool
+	)
 	for {
 		select {
 		case <-r.stop:
 			return
-		case jpeg, ok := <-dec.Frames():
+		case frame = <-r.jpegs:
+		case frame, ok = <-dec.Frames():
 			if !ok {
 				return // ffmpeg が終わった
 			}
+		}
+		{
+			if !r.dev.claimFrame(frame.CapMs) {
+				r.dev.update(func(rt *Runtime) { rt.Duplicates++ })
+				continue // 処理済みのフレーム
+			}
+			jpeg := frame.JPEG
 			now := time.Now()
+			if frame.CapMs > 0 {
+				now = time.UnixMilli(frame.CapMs)
+			}
 			if next.IsZero() {
 				next = now
 			}

@@ -28,6 +28,7 @@ type Runtime struct {
 	Decoded      int64     // 受信したフレーム数
 	Enqueued     int64     // キューに積んだフレーム数
 	Dropped      int64     // キューがあふれて捨てたフレーム数
+	Duplicates   int64     // 処理済み（同じ撮影時刻）なので、認識に回さなかったフレーム数
 	DecodeErrors int64     // デコーダに渡せず捨てたチャンク数
 	RxFPS        float64   // 受信しているフレームレート（チャンク/秒）
 	RxBytes      int64     // スマホから受信した量の累計（バイト）

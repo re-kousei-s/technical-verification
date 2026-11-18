@@ -18,9 +18,18 @@ import (
 type Decoder struct {
 	cmd    *exec.Cmd
 	in     chan []byte   // ffmpeg に渡すチャンクの待ち行列
-	frames chan []byte   // ffmpeg が出した JPEG
+	frames chan Frame    // ffmpeg が出した JPEG と、その撮影時刻
 	done   chan struct{} // ffmpeg が終わったら閉じる
 	once   sync.Once
+	mu     sync.Mutex
+	caps   []int64 // ffmpeg に渡したチャンクの撮影時刻（渡した順）。JPEG が 1 枚出るたびに、先頭から 1 つ取る
+}
+
+// Frame は、デコードした 1 枚。
+// 送信ページは B フレームを使わない（Baseline）ので、ffmpeg は、渡した順に、1 チャンクにつき 1 枚を出す。そのため、撮影時刻を、順に対応付けられる。
+type Frame struct {
+	JPEG  []byte
+	CapMs int64
 }
 
 // ffmpeg に渡す引数。遅れを小さくし、フレームを 1 枚も捨てない（-fps_mode passthrough）。
@@ -56,7 +65,7 @@ func NewDecoder() (*Decoder, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	d := &Decoder{cmd: cmd, in: make(chan []byte, 256), frames: make(chan []byte, 16), done: make(chan struct{})}
+	d := &Decoder{cmd: cmd, in: make(chan []byte, 256), frames: make(chan Frame, 16), done: make(chan struct{})}
 
 	// 書く側：待ち行列のチャンクを、順に ffmpeg の標準入力へ
 	go func() {
@@ -76,7 +85,12 @@ func NewDecoder() (*Decoder, error) {
 		sc.Buffer(make([]byte, 0, 1<<20), 16<<20)
 		sc.Split(splitJPEG)
 		for sc.Scan() {
-			frame := append([]byte(nil), sc.Bytes()...) // Scanner のバッファは使い回されるのでコピーする
+			frame := Frame{JPEG: append([]byte(nil), sc.Bytes()...)} // Scanner のバッファは使い回されるのでコピーする
+			d.mu.Lock()
+			if len(d.caps) > 0 {
+				frame.CapMs, d.caps = d.caps[0], d.caps[1:]
+			}
+			d.mu.Unlock()
 			select {
 			case d.frames <- frame:
 			default: // 受け取る側が詰まっている。古い方を諦める
@@ -88,10 +102,13 @@ func NewDecoder() (*Decoder, error) {
 
 // Write は、チャンクを ffmpeg に渡す。待ち行列がいっぱいなら捨てて false を返す
 // （ライブ中継を止めないため、ここで詰まらせない）。
-func (d *Decoder) Write(chunk []byte) (ok bool) {
+func (d *Decoder) Write(chunk []byte, capMs int64) (ok bool) {
 	defer func() { _ = recover() }() // Close 済みの in に送ると panic するので、握りつぶして false
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	select {
 	case d.in <- chunk:
+		d.caps = append(d.caps, capMs)
 		return true
 	default:
 		return false
@@ -99,7 +116,7 @@ func (d *Decoder) Write(chunk []byte) (ok bool) {
 }
 
 // Frames は、デコードできた JPEG が流れてくる通り道。ffmpeg が終わると閉じる。
-func (d *Decoder) Frames() <-chan []byte { return d.frames }
+func (d *Decoder) Frames() <-chan Frame { return d.frames }
 
 // Done は、ffmpeg が終わった（または Close された）ら閉じる。
 func (d *Decoder) Done() <-chan struct{} { return d.done }

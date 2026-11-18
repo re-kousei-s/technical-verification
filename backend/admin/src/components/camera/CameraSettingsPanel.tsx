@@ -24,14 +24,30 @@ export function CameraSettingsPanel({ cameraId }: { cameraId: string }) {
 
   if (cam?.source !== "db") return <p className="text-sm text-sub">固定の端末には、スマホがありません。</p>;
 
-  const send = async (body: { res?: string; zoom?: number; device_id?: string; bitrate?: number }) => {
+  const send = async (body: { res?: string; zoom?: number; device_id?: string; bitrate?: number; codec?: "h264" | "jpeg"; jpeg_quality?: number }) => {
     try { await api.setCameraSettings(cameraId, body); setMsg("送りました。スマホに、数秒で反映されます"); }
     catch (e) { setMsg((e as Error).message); }
   };
 
   return (
     <div className="space-y-3 text-sm">
-      {/* ビットレート：スマホの接続に関係なく、いつでも決められる */}
+      {/* 送り方：H.264（通信が少ない。画質は端末の符号化器しだい）／ JPEG（1 枚ずつ。端末ごとの差が出にくいが、通信量が 2〜3 倍） */}
+      <label className="block">
+        <span className="text-xs text-sub">映像の送り方（JPEG は、端末ごとの画質の差が出にくいが、通信量が 2〜3 倍）</span>
+        <select
+          className={SELECT}
+          value={info?.camera_settings?.codec === "jpeg" ? `jpeg:${info?.camera_settings?.jpeg_quality ?? 80}` : "h264"}
+          onChange={(e) => {
+            const [c, q] = e.target.value.split(":");
+            send(c === "jpeg" ? { codec: "jpeg", jpeg_quality: +q } : { codec: "h264" });
+          }}
+        >
+          <option value="h264">H.264（既定）</option>
+          {[70, 80, 90].map((q) => <option key={q} value={`jpeg:${q}`}>JPEG（品質 {q}）</option>)}
+        </select>
+      </label>
+
+      {/* ビットレート：スマホの接続に関係なく、いつでも決められる（H.264 のときだけ効く） */}
       <label className="block">
         <span className="text-xs text-sub">配信のビットレート（低いほど、通信と電池を節約。画質は、下がる）</span>
         <select className={SELECT} value={info?.camera_settings?.bitrate ?? 0} onChange={(e) => send({ bitrate: +e.target.value })}>
