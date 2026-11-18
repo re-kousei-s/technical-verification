@@ -26,12 +26,21 @@ def stream_name(partition):
     return f"frames:p{partition}"
 
 
-def tracks_stream(frames_stream):
-    """検出 + 追跡の worker が、追跡の結果を流すストリーム。フレームのストリームと、同じ分割の番号（frames:p3 → tracks:p3）"""
-    return frames_stream.replace("frames:", "tracks:", 1)
+# パイプライン（3 段）：frames:p{n} ─① 検出─▶ dets:p{n} ─② 追跡─▶ tracks:p{n} ─③ 判定─▶ DB・result:{id}
+# 同じ端末は、いつも同じ分割の番号 n を通るので、順番が保たれる。
+
+def dets_stream(frames_stream):
+    """① 検出が、検出の結果（枠・スコア）を流すストリーム（frames:p3 → dets:p3）"""
+    return frames_stream.replace("frames:", "dets:", 1)
 
 
-JUDGE_GROUP = "judges"  # 判定の service が、追跡の結果を読むためのコンシューマーグループ
+def tracks_stream(stream):
+    """② 追跡が、追跡の結果（人ID つきの枠）を流すストリーム（frames:p3 / dets:p3 → tracks:p3）"""
+    return stream.replace("frames:", "tracks:", 1).replace("dets:", "tracks:", 1)
+
+
+TRACKER_GROUP = "trackers"  # ② 追跡が、検出の結果を読むためのコンシューマーグループ
+JUDGE_GROUP = "judges"  # ③ 判定が、追跡の結果を読むためのコンシューマーグループ
 
 
 def partition_of(camera_id, n=None):

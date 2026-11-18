@@ -8,7 +8,8 @@ sys.path.insert(0, "/app")
 from aggregator.counter import CameraCounter  # noqa: E402
 
 MATRIX = yaml.safe_load(open("/config/matrix.yaml"))
-TRACKERS = {t["name"]: t for t in MATRIX["aggregator"]["trackers"]}
+TRACKER = MATRIX["aggregator"]["tracker"]  # ② 追跡の設定
+TILES = MATRIX["aggregator"]["tiles"]  # ③ 判定（タイル）の設定
 
 
 def load(path, min_score=0.0):
@@ -26,13 +27,12 @@ def messages(d, frames):
     return out
 
 
-def run(d, frames, lines, anchor="bottom_center", edge=0.0, confirm=1.5, tracker_over=None, min_cross=0.0, method="line", heading=None, pad=0):
-    """lines: [{"id","name","line":[[x,y],[x,y]]}]。戻り値: (events, tracks)。events = [(秒, 向き, 追跡ID, 線の名前)]"""
-    trk = json.loads(json.dumps(TRACKERS["lowfps"]))
-    trk["params"].update(tracker_over or {})
-    c = CameraCounter(lines, d["w"], d["h"], trk, d["fps"], anchor, min_cross, edge, confirm, method, heading)
+def run(d, frames, lines, tracker_over=None, heading=None, pad=0, **_ignored):
+    """いまの ② 追跡 ＋ ③ 判定（タイル）で数える。tracker_over・heading は、追跡・タイルの設定の上書き。
+    lines: [{"id","name","line":[[x,y],[x,y]]}]。戻り値: (events, tracks)。events = [(秒, 向き, 追跡ID, 線の名前)]"""
+    c = CameraCounter(lines, d["w"], d["h"], {**TRACKER, **(tracker_over or {})}, {**TILES, **(heading or {})})
     tracks = {}
-    for k, m in enumerate(messages(d, list(frames) + [[] for _ in range(pad)])):  # pad：映像が終わったあとも、検出なしのフレームが続く、と見なす（確定の猶予を、流すため）
+    for k, m in enumerate(messages(d, list(frames) + [[] for _ in range(pad)])):  # pad：映像が終わったあとも、検出なしのフレームが続く、と見なす
         tr = c.process(m)
         for i in range(len(tr)):
             tid = int(tr.tracker_id[i])

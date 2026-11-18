@@ -17,10 +17,10 @@ from libs.settings import ANNOTATE_EVERY_S, DETECTOR, NAME, OWNED, RESULT_MIN_SC
 
 
 class RedisOutput:
-    def __init__(self, rdb, stats):
+    def __init__(self, rdb, stats, tiles_cfg=None):
         self.r = rdb
         self.stats = stats
-        self.annotator = Annotator()
+        self.annotator = Annotator(tiles_cfg)  # 判定のタイルも描く
         self._last_image_at = {}  # 端末ID → 画像を最後に出した時刻
         self._recent_events = {}  # 端末ID → 最近の通過（最大 5 件）
 
@@ -41,13 +41,13 @@ class RedisOutput:
             "vectors": vectors or [],  # 人ごとの、足元・動きのベクトル・線ごとのスコア（画面で見られる）
         }), ex=10)  # 10 秒で消える。送信が止まれば、古い枠は出なくなる
 
-    def publish_image(self, camera_id, frame, tracked, cam):
+    def publish_image(self, camera_id, frame, dets, cam):
         """検出枠つきの画像を出す。毎フレームは描かず、ANNOTATE_EVERY_S 秒に 1 回だけ。"""
         now = time.time()
         if now - self._last_image_at.get(camera_id, 0) < ANNOTATE_EVERY_S:
             return
         self._last_image_at[camera_id] = now
-        jpeg = self.annotator.render(camera_id, frame, tracked, cam)
+        jpeg = self.annotator.render(camera_id, frame, dets, cam)
         if jpeg:
             self.r.set(f"annotated:{camera_id}", jpeg, ex=120)
 

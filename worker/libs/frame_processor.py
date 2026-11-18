@@ -1,7 +1,7 @@
-"""キューから取り出した 1 フレームを処理する（検出 + 追跡の worker）。
+"""① 検出：キューから取り出した 1 フレームから、人の枠を出して、② 追跡へ流す。
 
-  JPEG をデコード → 検出（人の枠）→ 追跡（人ごとの ID）→ 人の状態管理（判定に渡す座標）→ Redis に流す
-  （線を越えたかの判定は、judge の service が、流した結果を読んで行う。画像は、ここまで）
+  JPEG をデコード → 検出（人の枠とスコア）→ Redis（dets:p…）へ流す
+画像を見るのは、ここだけ。追跡（人ごとの ID）と判定（IN/OUT）は、後ろの段（tracker.py・judge.py）が行う。
 """
 
 import json
@@ -11,24 +11,23 @@ import time
 import cv2
 import numpy as np
 
-from aggregator.appearance import torso_hist
-from aggregator.tracking import tracks_of
-from common.live import now_ms, tracks_stream
-from common.tiling import detect_tiled
+from common.live import dets_stream, now_ms
+from libs.once import Once
 from libs.settings import DETECTOR, RECORD_DIR, STALE_MS
 
 log = logging.getLogger("worker")
 
-TRACKS_MAXLEN = 5000  # 追跡の結果のストリームに、残す最大の件数（judge が止まっても、溜まりすぎない）
+STREAM_MAXLEN = 5000  # 検出の結果のストリームに、残す最大の件数（後ろの段が止まっても、溜まりすぎない）
 
 
 class FrameProcessor:
     def __init__(self, registry, detector, rdb, output, stats):
-        self.registry = registry  # 端末の設定と、追跡の状態
+        self.registry = registry  # 端末の設定
         self.detector = detector  # 人を検出するモデル
         self.r = rdb
         self.output = output  # 検出枠つきの画像を出す
         self.stats = stats
+        self.once = Once()  # 同じフレームを、2 度検出しない
 
     def handle(self, fields, stream):
         """キューの 1 エントリ（端末ID・撮影時刻・JPEG）を処理する。stream は、読んだ分割（frames:p3 など）。"""
@@ -38,8 +37,9 @@ class FrameProcessor:
             log.warning("未登録の端末のフレームを捨てた: %s", camera_id)
             return
         ts_ms = int(fields[b"ts_ms"])
-        # 溜まった古いフレームは、処理しない。あとから処理しても、通過だけが遅れて数に加わる（誤解のもと）。
-        # worker が追いつかないときや、再起動した直後に起きる。捨てた数は、stats.stale に数える
+        if not self.once.first(camera_id, ts_ms):
+            return  # 処理済みのフレーム（再配達・送り直し）
+        # 溜まった古いフレームは、処理しない（あとから処理しても、通過だけが遅れて数に加わる）。捨てた数は stats.stale に数える
         if now_ms() - ts_ms > STALE_MS:
             self.stats.stale += 1
             return
@@ -48,36 +48,27 @@ class FrameProcessor:
         if frame is None:
             raise ValueError("JPEG をデコードできない")
         h, w = frame.shape[:2]
-        tracker, tiles, lifecycle = self.registry.tracker_for(camera_id, w, h)
 
-        # 1) 検出（画面を分割する設定なら、タイルごとに検出して結果を合わせる）
         t0 = time.perf_counter()
-        boxes, scores = detect_tiled(self.detector.detect, frame, tiles)
+        boxes, scores = self.detector.detect(frame)
         infer_ms = (time.perf_counter() - t0) * 1000
+        dets = [[*(round(float(v), 1) for v in b[:4]), round(float(s), 3)] for b, s in zip(boxes, scores)]
 
-        # 2) 追跡（人ごとに ID を付け続ける）
-        feats = [torso_hist(frame, b) for b in boxes]  # 服の色（人が重なったときの、ID の取り違えを減らす）
-        tracked = tracker.update(boxes, scores, ts_ms / 1000.0, feats)
-        if RECORD_DIR:
-            self._record(camera_id, ts_ms, w, h, boxes, scores, feats)
-        tracks = tracks_of(tracked)
-        events, alias = lifecycle.update(tracks)  # 人の状態管理：判定に渡す座標を作る（starting・moving・deleted）
-
-        # 3) 追跡の結果を、判定の service へ流す（同じ端末は、同じ分割に届くので、順番が保たれる）
-        self.r.xadd(tracks_stream(stream), {"data": json.dumps({
+        # 同じ端末は、同じ分割の番号へ流す（順番が保たれる）
+        self.r.xadd(dets_stream(stream), {"data": json.dumps({
             "camera_id": camera_id, "ts_ms": ts_ms, "w": w, "h": h, "model": DETECTOR,
-            "n_dets": len(boxes), "infer_ms": round(infer_ms, 1), "tracks": tracks, "events": events, "alias": alias,
-        })}, maxlen=TRACKS_MAXLEN, approximate=True)
+            "infer_ms": round(infer_ms, 1), "dets": dets,
+        })}, maxlen=STREAM_MAXLEN, approximate=True)
 
-        self.output.publish_image(camera_id, frame, tracked, cam)
+        if RECORD_DIR:
+            self._record(camera_id, ts_ms, w, h, dets)
+        self.output.publish_image(camera_id, frame, dets, cam)
         self.stats.add(infer_ms, max(0, now_ms() - ts_ms))
 
     @staticmethod
-    def _record(camera_id, ts_ms, w, h, boxes, scores, feats):
+    def _record(camera_id, ts_ms, w, h, dets):
         """検出の結果を、1 フレーム 1 行で、追記する（日ごと・端末ごとのファイル）。記録に失敗しても、処理は止めない。"""
         try:
-            dets = [[*(round(float(v), 1) for v in b[:4]), round(float(s), 3),
-                     None if f is None else [round(float(v), 4) for v in f]] for b, s, f in zip(boxes, scores, feats)]
             day = time.strftime("%Y%m%d", time.gmtime(ts_ms / 1000))
             with open(f"{RECORD_DIR}/{camera_id}-{day}.jsonl", "a") as fp:
                 fp.write(json.dumps({"ts_ms": ts_ms, "w": w, "h": h, "dets": dets}) + "\n")

@@ -33,6 +33,18 @@ class ResultWriter:
     def __init__(self):
         self.db = connect_db()
 
+    def last_frame_ms(self, camera_id):
+        """前回までに処理した、最後のフレームの時刻（ミリ秒）。無ければ None。"""
+        try:
+            with self.db.cursor() as cur:
+                cur.execute("SELECT extract(epoch FROM last_frame_ts) * 1000 FROM camera_state WHERE camera_id = %s", (camera_id,))
+                row = cur.fetchone()
+            self.db.commit()
+            return int(row[0]) if row and row[0] is not None else None
+        except psycopg.Error:
+            self.db.rollback()
+            return None
+
     def write(self, camera_id, cam, ts_ms, w, h, events, n_dets, n_tracks, infer_ms, lag_ms, model=None):
         """events は (時刻, "in"/"out", 追跡ID, x, y, 線の名前) のリスト。"""
         floor = cam.get("floor")

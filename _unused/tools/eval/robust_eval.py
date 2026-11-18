@@ -15,7 +15,7 @@ for t in H.truth: t["line"] = min(LINES, key=lambda L: dist((t["x"], t["y"]), L[
 SETS = os.environ.get("SETS", "hard.yolox,hard_q5,hard_q7,hard_hi,hard.rfdetr,live1").split(",")
 SEEDS, DROP, JIT = int(os.environ.get("SEEDS", "4")), float(os.environ.get("DROP", "0.15")), float(os.environ.get("JIT", "1.5"))
 data = {s: E.load(f"/o/{s}.feat.json" if os.path.exists(f"/o/{s}.feat.json") else f"/o/{s}.json", 0.1) for s in SETS}
-BASE = E.MATRIX["aggregator"]["episode"]
+BASE = {}  # 設定の候補にない値は、いまの設定（matrix.yaml）
 
 def perturb(frames, seed):
     if seed == 0:
@@ -33,26 +33,29 @@ def perturb(frames, seed):
     return out
 
 print(f"入力 {len(SETS)} × ゆらぎ {SEEDS} 回（1 回目はゆらぎなし）。1 回あたり正解 24 件")
-print("合致 平均 [最小〜最大] | 数えすぎ 平均 | ゆらぎなしの入力ごとの合致 | 設定")
+print("合致 平均 [最小〜最大] | 数えすぎ 平均 | 漏れ IN / OUT（正解 12 / 12） | ゆらぎなしの入力ごとの合致 | 設定")
 rows = []
 MISS, EXTRA = {}, {}
 for combo in itertools.product(*grid.values()):
     p = {k: v for k, v in zip(grid, combo) if k != "_"}
+    label = dict(p)
+    method = p.pop("method", "episode")
     trk = {k[4:]: p.pop(k) for k in list(p) if k.startswith("trk_")}
-    hits, fps, base = [], [], []
+    hits, fps, base, mi, mo = [], [], [], [], []
     for s in SETS:
         d, fr = data[s]
         for seed in range(SEEDS):
-            ev, _ = E.run(d, perturb(fr, seed), LINES, method="episode", heading={**BASE, **p}, pad=20, tracker_over=trk)
+            ev, _ = E.run(d, perturb(fr, seed), LINES, method=method, heading={**BASE, **p}, pad=20, tracker_over=trk)
             tp, ex, ms = H.score(ev)
             hits.append(tp); fps.append(len(ex))
+            mi.append(sum(m["dir"] == "in" for m in ms)); mo.append(sum(m["dir"] == "out" for m in ms))
             for m in ms: MISS[(round(m["t"], 1), m["dir"], m["line"])] = MISS.get((round(m["t"], 1), m["dir"], m["line"]), 0) + 1
             for e in ex: EXTRA[(e[1], e[3])] = EXTRA.get((e[1], e[3]), 0) + 1
             if seed == 0: base.append(tp)
-    rows.append((statistics.mean(hits) - 0.5 * statistics.mean(fps), hits, fps, base, {**p, **{"trk_" + k: v for k, v in trk.items()}}))
+    rows.append((statistics.mean(hits) - 0.5 * statistics.mean(fps), hits, fps, base, label, statistics.mean(mi), statistics.mean(mo)))
 rows.sort(key=lambda r: -r[0])
-for _, hits, fps, base, p in rows[:int(os.environ.get("TOP", "10"))]:
-    print(f"{statistics.mean(hits):5.2f} [{min(hits)}〜{max(hits)}] | {statistics.mean(fps):4.2f} | {base} | {p}")
+for _, hits, fps, base, p, ami, amo in rows[:int(os.environ.get("TOP", "10"))]:
+    print(f"{statistics.mean(hits):5.2f} [{min(hits)}〜{max(hits)}] | {statistics.mean(fps):4.2f} | {ami:4.2f} / {amo:4.2f} | {base} | {p}")
 if os.environ.get("DETAIL") == "1":  # 最後の設定の、通過ごとの、落ちた回数
     n = len(SETS) * SEEDS
     print(f"落ちた回数（{n} 回中）:")

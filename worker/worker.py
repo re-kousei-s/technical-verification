@@ -1,17 +1,12 @@
-"""worker（検出 + 追跡）：キューからフレームを取り出して、人を検出・追跡し、追跡の結果を、判定の service へ流す（Python）。
+"""① 検出の worker：キューからフレームを取り出して、人の枠を出し、② 追跡（tracker.py）へ流す（Python）。
 
-  バックエンド（Go）が積んだ JPEG ─▶ 検出 ─▶ 追跡 ─▶ Redis（tracks:p…）─▶ judge.py（線を越えたかの判定・DB）
+  パイプライン（3 段。それぞれ別のコンテナ。Redis のストリームでつなぐ）
+    バックエンド（Go）が積んだ JPEG ─① 検出（ここ）─▶ dets:p… ─② 追跡（tracker.py）─▶ tracks:p… ─③ 判定（judge.py）─▶ DB・画面
 
-画像を見るのは、ここまで。線を越えたかの判定は、judge.py（画像を見ない、2 次元の幾何だけ）が行う。
-このファイルは、部品を組み立てて動かすだけ。中身は libs/ に分けてある。
-  libs/settings.py         環境変数・定数
-  libs/queue_consumer.py   キューの読み取りと ACK
-  libs/frame_processor.py  1 フレームの処理（検出 → 追跡 → 追跡の結果を流す）
-  libs/camera_registry.py  端末の設定と、追跡・判定の状態
-  libs/redis_output.py     Redis への出力（画像・ハートビート）
-  libs/annotator.py        検出枠つきの画像を描く
-  libs/stats.py            処理件数・時間の集計
-追跡は aggregator/tracking.py、判定は aggregator/judge.py、検出器は common/ にある。
+画像を見るのは、ここだけ。重いので、台数を増やして並べる。
+  libs/queue_consumer.py   キューの読み取りと ACK（担当する分割を、worker どうしで分け合う）
+  libs/frame_processor.py  1 フレームの処理（デコード → 検出 → 流す）
+  libs/redis_output.py     検出枠つきの画像（管理画面用）・ハートビート
 """
 
 import logging
@@ -39,7 +34,7 @@ def main():
     registry = CameraRegistry()
     log.info("検出器を読み込み中: %s", DETECTOR)
     detector = make_detector(DETECTOR, registry.min_score)
-    output = RedisOutput(rdb, stats)
+    output = RedisOutput(rdb, stats, registry.tiles_cfg)
 
     # 1 フレームの処理と、キューの読み取りを組み合わせる
     processor = FrameProcessor(registry, detector, rdb, output, stats)

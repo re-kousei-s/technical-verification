@@ -48,16 +48,17 @@ def dist(pt, ab):
 for t in H.truth:
     t["line"] = min(LINES, key=lambda L: dist((t["x"], t["y"]), L["line"]))["name"]
 
-params = {**E.MATRIX["aggregator"]["episode"], **json.loads(os.environ.get("P", "{}"))}
-trk = json.loads(json.dumps(E.TRACKERS["lowfps"]))
+P = json.loads(os.environ.get("P", "{}"))  # 設定の上書き（trk_ で始まる値は、追跡の設定。ほかは、タイルの設定）
+trk = {**E.TRACKER, **{k[4:]: v for k, v in P.items() if k.startswith("trk_")}}
+tiles = {**E.TILES, **{k: v for k, v in P.items() if not k.startswith("trk_")}}
 w, h = run[0]["w"], run[0]["h"]
-c = CameraCounter(LINES, w, h, trk, 3.0, method="episode", heading=params)
+c = CameraCounter(LINES, w, h, trk, tiles)
 t0 = run[0]["ts_ms"]
 pad = [{"ts_ms": run[-1]["ts_ms"] + 333 * (k + 1), "dets": []} for k in range(20)]
 for r in run + pad:
     sec = (r["ts_ms"] - t0) / 1000
     c.process({"ts": "2026-11-04T10:%02d:%09.6f+09:00" % (int(sec // 60), sec % 60),
-               "detections": [{"x": b[0], "y": b[1], "w": b[2] - b[0], "h": b[3] - b[1], "score": b[4], "feat": b[5]} for b in r["dets"]]})
+               "detections": [{"x": b[0], "y": b[1], "w": b[2] - b[0], "h": b[3] - b[1], "score": b[4]} for b in r["dets"]]})
 ev = [(round(e[0], 1), e[1], e[2], e[5]) for e in c.events]
 
 res = []
