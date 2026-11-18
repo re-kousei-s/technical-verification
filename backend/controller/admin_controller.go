@@ -210,7 +210,13 @@ func (a *AdminController) liveWS(c echo.Context) error {
 		log.Printf("映像の視聴を終了 %s thumb=%v 接続元=%s（%.0f 秒）", id, thumb, c.RealIP(), time.Since(start).Seconds())
 	}()
 
-	// 管理画面側が閉じたかを知るため、読み続ける（届くメッセージは使わない）
+	// 管理画面側が閉じたかを知るため、読み続ける（届くメッセージは使わない）。
+	// トンネル越しだと、画面を閉じても、切れたことが届かないことがある（「見ていないのに 15fps のまま」になる）。
+	// そこで、5 秒ごとに ping を送り、20 秒返事（pong）がなければ、切れたとみなす（ブラウザは、ping に自動で返事をする）。
+	_ = conn.SetReadDeadline(time.Now().Add(liveDeadline))
+	conn.SetPongHandler(func(string) error { return conn.SetReadDeadline(time.Now().Add(liveDeadline)) })
+	ping := time.NewTicker(5 * time.Second)
+	defer ping.Stop()
 	closed := make(chan struct{})
 	go func() {
 		for {
@@ -248,6 +254,10 @@ func (a *AdminController) liveWS(c echo.Context) error {
 			a.streams.AddTx(id, len(chunk))
 		case <-closed:
 			return nil
+		case <-ping.C:
+			if err := conn.ping(); err != nil {
+				return nil
+			}
 		case <-limitC:
 			conn.closeWith(websocket.CloseNormalClosure, "time limit")
 			return nil

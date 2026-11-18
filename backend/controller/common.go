@@ -62,6 +62,16 @@ func (w *wsConn) WriteBinary(b []byte) error {
 	return w.WriteMessage(websocket.BinaryMessage, b)
 }
 
+// liveDeadline は、ping の返事（pong）を待つ時間。これを過ぎたら、相手は切れたとみなす。
+const liveDeadline = 20 * time.Second
+
+// ping は、相手が生きているかを確かめる（返事は SetPongHandler で受ける）。
+func (w *wsConn) ping() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.WriteControl(websocket.PingMessage, nil, time.Now().Add(2*time.Second))
+}
+
 // closeWith は、クローズコードと理由を付けて接続を閉じる。
 func (w *wsConn) closeWith(code int, reason string) {
 	w.mu.Lock()
